@@ -1,4 +1,5 @@
 name: Run VTM Kimono1
+# Fresh run requested after VTM import completed successfully.
 
 on:
   workflow_dispatch:
