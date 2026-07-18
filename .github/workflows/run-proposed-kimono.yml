@@ -1,4 +1,5 @@
 name: Run Proposed CD-SATM Kimono1
+# Explicit cloud run trigger for Proposed CD-SATM.
 
 on:
   workflow_dispatch:
