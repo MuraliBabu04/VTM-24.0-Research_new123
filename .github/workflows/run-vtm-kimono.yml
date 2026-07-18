@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       sequence_url:
-        description: Temporary direct-download URL for B1_Kimono1_1920x1080_24.yuv
+        description: Google Drive sharing URL for B1_Kimono1_1920x1080_24.yuv
         required: true
         type: string
       frames:
@@ -30,13 +30,18 @@ jobs:
           chmod +x bin/EncoderAppStatic scripts/*.sh
           bin/EncoderAppStatic --help >/dev/null
 
-      - name: Download Class B1 Kimono1
+      - name: Download Class B1 Kimono1 from Drive
         env:
           SEQUENCE_URL: ${{ inputs.sequence_url }}
         run: |
+          python3 -m pip install --disable-pip-version-check gdown
           mkdir -p test_sequence
-          curl -L --fail --retry 3 "$SEQUENCE_URL" -o test_sequence/B1_Kimono1_1920x1080_24.yuv
-          test "$(stat -c%s test_sequence/B1_Kimono1_1920x1080_24.yuv)" -eq 746496000
+          gdown --fuzzy "$SEQUENCE_URL" -O test_sequence/B1_Kimono1_1920x1080_24.yuv
+          actual_size="$(stat -c%s test_sequence/B1_Kimono1_1920x1080_24.yuv)"
+          test "$actual_size" -eq 746496000 || {
+            echo "Unexpected Kimono1 file size: $actual_size bytes; expected 746496000." >&2
+            exit 1
+          }
 
       - name: Run QP 22, 27, 32 and 37
         env:
