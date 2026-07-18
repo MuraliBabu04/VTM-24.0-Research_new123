@@ -1,6 +1,7 @@
 name: Import and build VTM
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
 
