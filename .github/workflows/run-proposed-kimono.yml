@@ -65,6 +65,7 @@ jobs:
             echo "CD-SATM Proposed B1 Kimono1 results"
             echo "QP values: 22, 27, 32, 37"
             echo "Frames represented: ${{ inputs.frames || '64' }}"
+            echo "Transform tools: MTS=1, LFNST=1"
             echo
             echo "Important: this DES models hardware latency, memory reads and dynamic power."
             echo "It does not encode a second bitstream or independently calculate bitrate/PSNR."
