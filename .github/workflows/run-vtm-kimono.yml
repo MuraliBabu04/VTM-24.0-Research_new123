@@ -5,13 +5,18 @@ on:
     inputs:
       sequence_url:
         description: Google Drive sharing URL for B1_Kimono1_1920x1080_24.yuv
-        required: true
+        required: false
+        default: https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view?usp=drive_link
         type: string
       frames:
         description: Number of frames to encode
-        required: true
+        required: false
         default: "64"
         type: string
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-vtm-kimono.yml
 
 permissions:
   contents: read
@@ -33,7 +38,7 @@ jobs:
 
       - name: Download Class B1 Kimono1 from Drive
         env:
-          SEQUENCE_URL: ${{ inputs.sequence_url }}
+          SEQUENCE_URL: ${{ inputs.sequence_url || 'https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view?usp=drive_link' }}
         run: |
           python3 -m pip install --disable-pip-version-check gdown
           mkdir -p test_sequence
@@ -46,7 +51,7 @@ jobs:
 
       - name: Run QP 22, 27, 32 and 37
         env:
-          FRAMES: ${{ inputs.frames }}
+          FRAMES: ${{ inputs.frames || '64' }}
         run: |
           for qp in 22 27 32 37; do
             scripts/run_anchor_B1_Kimono1.sh "$qp"
