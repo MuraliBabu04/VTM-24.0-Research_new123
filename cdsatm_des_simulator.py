@@ -314,8 +314,8 @@ def run_simulation_for_seq(seq_id, qp, frames, mts=1, lfnst=1):
         print(f"{size}x{size:<8} | {avg_base_cycles:<20,.0f} | {avg_cdsatm_cycles:<20,.0f} | {power_savings:>5.2f}%         | {cdsatm_power_mw:.2f} mW")
         
     print("==========================================================")
-    print("Note: Bitrate and PSNR are bit-exact with Standard VTM.")
-    print("BD-Rate Deviation: 0.00%")
+    print("Note: Codec bitrate and PSNR are measured by Standard VTM.")
+    print("CD-SATM codec equivalence requires separate RTL bit-exact validation.")
 
 if __name__ == "__main__":
     import argparse
