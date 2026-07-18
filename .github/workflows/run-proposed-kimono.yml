@@ -1,0 +1,87 @@
+name: Run Proposed CD-SATM Kimono1
+
+on:
+  workflow_dispatch:
+    inputs:
+      frames:
+        description: Number of frames represented by the hardware simulation
+        required: false
+        default: "64"
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-proposed-kimono.yml
+
+permissions:
+  contents: read
+
+jobs:
+  proposed:
+    name: Proposed QP ${{ matrix.qp }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        qp: [22, 27, 32, 37]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run proposed CD-SATM simulator
+        env:
+          FRAMES: ${{ inputs.frames || '64' }}
+        run: |
+          chmod +x scripts/run_proposed_B1_Kimono1.sh
+          scripts/run_proposed_B1_Kimono1.sh "${{ matrix.qp }}"
+
+      - name: Upload proposed QP result
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-B1-Kimono1-QP${{ matrix.qp }}
+          path: results/proposed/B1_Kimono1/QP${{ matrix.qp }}
+          retention-days: 30
+
+  aggregate:
+    name: Collect proposed results
+    if: ${{ always() }}
+    needs: proposed
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all proposed QP results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: proposed-B1-Kimono1-QP*
+          path: results/proposed/B1_Kimono1
+          merge-multiple: true
+
+      - name: Build proposed summary
+        shell: bash
+        run: |
+          {
+            echo "CD-SATM Proposed B1 Kimono1 results"
+            echo "QP values: 22, 27, 32, 37"
+            echo "Frames represented: ${{ inputs.frames || '64' }}"
+            echo
+            echo "Important: this DES models hardware latency, memory reads and dynamic power."
+            echo "It does not encode a second bitstream or independently calculate bitrate/PSNR."
+            echo "For a bit-exact hardware implementation, codec bitrate/PSNR are inherited from Anchor VTM."
+            echo
+            find results/proposed/B1_Kimono1 -type f -name '*.log' -print0 |
+              sort -z |
+              while IFS= read -r -d '' log; do
+                echo "===== $log ====="
+                cat "$log"
+                echo
+              done
+          } | tee results/proposed/B1_Kimono1/proposed_summary.txt
+
+      - name: Upload combined proposed results
+        uses: actions/upload-artifact@v4
+        with:
+          name: Proposed-CD-SATM-B1-Kimono1-results
+          path: results/proposed/B1_Kimono1
+          retention-days: 30
