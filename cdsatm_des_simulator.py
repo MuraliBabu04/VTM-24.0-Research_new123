@@ -270,7 +270,7 @@ def generate_html(results):
         f.write(html)
     print(f"\\nSuccessfully generated HTML report at: {html_path}")
 
-def run_simulation_for_seq(seq_id, qp, frames):
+def run_simulation_for_seq(seq_id, qp, frames, mts=1, lfnst=1):
     BLOCK_SIZES = [4, 8, 16, 32, 64]
     NUM_JOBS = frames * 5  # approximate jobs based on frames
     
@@ -289,6 +289,7 @@ def run_simulation_for_seq(seq_id, qp, frames):
     print("==========================================================")
     print(f"CD-SATM Hardware Simulation Results")
     print(f"Sequence: {seq_id} | QP: {qp} | Frames: {frames}")
+    print(f"Transform tools: MTS={mts} | LFNST={lfnst}")
     print(f"Estimated Sparsity: {sparsity*100:.1f}%")
     print("==========================================================")
     print(f"{'Block':<10} | {'Base Latency (cyc)':<20} | {'CD-SATM (cyc)':<20} | {'Power Savings':<15} | {'CD-SATM Power'}")
@@ -322,9 +323,11 @@ if __name__ == "__main__":
     parser.add_argument("--seq", type=str, help="Sequence ID")
     parser.add_argument("--qp", type=int, help="Quantization Parameter")
     parser.add_argument("--frames", type=int, default=64, help="Number of frames")
+    parser.add_argument("--mts", type=int, choices=[0, 1], default=1, help="MTS enable flag")
+    parser.add_argument("--lfnst", type=int, choices=[0, 1], default=1, help="LFNST enable flag")
     args = parser.parse_args()
     
     if args.seq and args.qp:
-        run_simulation_for_seq(args.seq, args.qp, args.frames)
+        run_simulation_for_seq(args.seq, args.qp, args.frames, args.mts, args.lfnst)
     else:
         run_all_simulations()
