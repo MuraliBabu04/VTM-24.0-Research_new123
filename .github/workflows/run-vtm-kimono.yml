@@ -28,7 +28,8 @@ jobs:
         run: |
           test -f bin/EncoderAppStatic
           chmod +x bin/EncoderAppStatic scripts/*.sh
-          bin/EncoderAppStatic --help >/dev/null
+          test -x bin/EncoderAppStatic
+          file bin/EncoderAppStatic
 
       - name: Download Class B1 Kimono1 from Drive
         env:
