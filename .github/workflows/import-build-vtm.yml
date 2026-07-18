@@ -41,6 +41,13 @@ jobs:
           rm -rf build
           git add -A
           git add -f bin/EncoderAppStatic bin/DecoderAppStatic
-          if [ -f bin/BitstreamExtractorStatic ]; then git add -f bin/BitstreamExtractorStatic; fi
-          git commit -m "Import official VTM source and compiled Linux executables"
-          git push origin main
+          if [ -f bin/BitstreamExtractorAppStatic ]; then
+            git add -f bin/BitstreamExtractorAppStatic
+          fi
+
+          if git diff --cached --quiet; then
+            echo "VTM source and Linux executables are already up to date; nothing to commit."
+          else
+            git commit -m "Import official VTM source and compiled Linux executables"
+            git push origin main
+          fi
