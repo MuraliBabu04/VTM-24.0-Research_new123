@@ -1,0 +1,65 @@
+name: Run VTM Kimono1
+
+on:
+  workflow_dispatch:
+    inputs:
+      sequence_url:
+        description: Temporary direct-download URL for B1_Kimono1_1920x1080_24.yuv
+        required: true
+        type: string
+      frames:
+        description: Number of frames to encode
+        required: true
+        default: "64"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  encode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify compiled Linux VTM encoder
+        run: |
+          test -f bin/EncoderAppStatic
+          chmod +x bin/EncoderAppStatic scripts/*.sh
+          bin/EncoderAppStatic --help >/dev/null
+
+      - name: Download Class B1 Kimono1
+        env:
+          SEQUENCE_URL: ${{ inputs.sequence_url }}
+        run: |
+          mkdir -p test_sequence
+          curl -L --fail --retry 3 "$SEQUENCE_URL" -o test_sequence/B1_Kimono1_1920x1080_24.yuv
+          test "$(stat -c%s test_sequence/B1_Kimono1_1920x1080_24.yuv)" -eq 746496000
+
+      - name: Run QP 22, 27, 32 and 37
+        env:
+          FRAMES: ${{ inputs.frames }}
+        run: |
+          for qp in 22 27 32 37; do
+            scripts/run_anchor_B1_Kimono1.sh "$qp"
+          done
+
+      - name: Collect bitrate and PSNR summaries
+        run: |
+          {
+            echo "VTM B1 Kimono1 summaries"
+            for log in results/B1_Kimono1/QP*/*.log; do
+              echo
+              echo "===== $log ====="
+              grep -E "SUMMARY|Total Frames|^[[:space:]]*[0-9]+[[:space:]]+a[[:space:]]" "$log" || true
+            done
+          } | tee results/B1_Kimono1/summary.txt
+
+      - name: Upload logs, bitstreams and summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: VTM-B1-Kimono1-results
+          path: results/B1_Kimono1
+          retention-days: 30
