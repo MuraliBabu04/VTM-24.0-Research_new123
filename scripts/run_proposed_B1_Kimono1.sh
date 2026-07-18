@@ -18,7 +18,7 @@ test -f "$SIMULATOR" || {
 }
 
 mkdir -p "$OUT"
-python3 "$SIMULATOR"   --seq B1_Kimono1   --qp "$QP"   --frames "$FRAMES"   2>&1 | tee "$OUT/B1_Kimono1_QP$QP.log"
+python3 "$SIMULATOR"   --seq B1_Kimono1   --qp "$QP"   --frames "$FRAMES"   --mts 1   --lfnst 1   2>&1 | tee "$OUT/B1_Kimono1_QP$QP.log"
 
 if [ -f "$ROOT/cdsatm_simulation_results.html" ]; then
   cp "$ROOT/cdsatm_simulation_results.html" "$OUT/B1_Kimono1_QP$QP.html"
