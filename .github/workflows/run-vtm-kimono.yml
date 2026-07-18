@@ -37,7 +37,7 @@ jobs:
         run: |
           python3 -m pip install --disable-pip-version-check gdown
           mkdir -p test_sequence
-          gdown --fuzzy "$SEQUENCE_URL" -O test_sequence/B1_Kimono1_1920x1080_24.yuv
+          gdown "$SEQUENCE_URL" -O test_sequence/B1_Kimono1_1920x1080_24.yuv
           actual_size="$(stat -c%s test_sequence/B1_Kimono1_1920x1080_24.yuv)"
           test "$actual_size" -eq 746496000 || {
             echo "Unexpected Kimono1 file size: $actual_size bytes; expected 746496000." >&2
