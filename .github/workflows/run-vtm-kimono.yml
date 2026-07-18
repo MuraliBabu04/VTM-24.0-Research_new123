@@ -1,5 +1,5 @@
 name: Run VTM Kimono1
-# Fresh run requested after VTM import completed successfully.
+# Drive access verified; start the Kimono1 anchor encoding run.
 
 on:
   workflow_dispatch:
