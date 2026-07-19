@@ -1,5 +1,4 @@
-name: Run VTM Kimono1
-# Drive access verified; start the Kimono1 anchor encoding run.
+name: Run VTM Kimono1 Anchor — 2 GOPs
 
 on:
   workflow_dispatch:
@@ -10,7 +9,7 @@ on:
         default: https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view?usp=drive_link
         type: string
       frames:
-        description: Number of frames to encode
+        description: Number of frames; default 64 = 2 GOPs for GOPSize 32
         required: false
         default: "64"
         type: string
@@ -23,20 +22,12 @@ permissions:
   contents: read
 
 jobs:
-  encode:
+  prepare:
+    name: Prepare Kimono1 input
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 30
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Verify compiled Linux VTM encoder
-        run: |
-          test -f bin/EncoderAppStatic
-          chmod +x bin/EncoderAppStatic scripts/*.sh
-          test -x bin/EncoderAppStatic
-          file bin/EncoderAppStatic
-
       - name: Download Class B1 Kimono1 from Drive
         env:
           SEQUENCE_URL: ${{ inputs.sequence_url || 'https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view?usp=drive_link' }}
@@ -50,28 +41,123 @@ jobs:
             exit 1
           }
 
-      - name: Run QP 22, 27, 32 and 37
-        env:
-          FRAMES: ${{ inputs.frames || '64' }}
-        run: |
-          for qp in 22 27 32 37; do
-            scripts/run_anchor_B1_Kimono1.sh "$qp"
-          done
-
-      - name: Collect bitrate and PSNR summaries
-        run: |
-          {
-            echo "VTM B1 Kimono1 summaries"
-            for log in results/B1_Kimono1/QP*/*.log; do
-              echo
-              echo "===== $log ====="
-              grep -E "SUMMARY|Total Frames|^[[:space:]]*[0-9]+[[:space:]]+a[[:space:]]" "$log" || true
-            done
-          } | tee results/B1_Kimono1/summary.txt
-
-      - name: Upload logs, bitstreams and summary
+      - name: Share input with parallel QP jobs
         uses: actions/upload-artifact@v4
         with:
-          name: VTM-B1-Kimono1-results
-          path: results/B1_Kimono1
+          name: B1-Kimono1-input
+          path: test_sequence/B1_Kimono1_1920x1080_24.yuv
+          retention-days: 1
+          compression-level: 0
+
+  anchor:
+    name: Anchor QP ${{ matrix.qp }} — 2 GOPs
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        qp: [22, 27, 32, 37]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Kimono1 input
+        uses: actions/download-artifact@v4
+        with:
+          name: B1-Kimono1-input
+          path: test_sequence
+
+      - name: Verify VTM, input and 2-GOP configuration
+        run: |
+          chmod +x bin/EncoderAppStatic scripts/*.sh
+          test -x bin/EncoderAppStatic
+          test -f test_sequence/B1_Kimono1_1920x1080_24.yuv
+          test "$(stat -c%s test_sequence/B1_Kimono1_1920x1080_24.yuv)" -eq 746496000
+          grep -Eq '^[[:space:]]*GOPSize[[:space:]]*:[[:space:]]*32([[:space:]]|$)' cfg/encoder_randomaccess_vtm.cfg
+          grep -q -- '--MTS=1' scripts/run_anchor_B1_Kimono1.sh
+          grep -q -- '--LFNST=1' scripts/run_anchor_B1_Kimono1.sh
+
+      - name: Run VTM anchor
+        env:
+          FRAMES: ${{ inputs.frames || '64' }}
+        run: scripts/run_anchor_B1_Kimono1.sh "${{ matrix.qp }}"
+
+      - name: Extract bitrate and PSNR summary
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          result_dir="results/B1_Kimono1/QP${{ matrix.qp }}"
+          log="$result_dir/B1_Kimono1_QP${{ matrix.qp }}.log"
+          {
+            echo "VTM Anchor — B1 Kimono1"
+            echo "QP: ${{ matrix.qp }}"
+            echo "Frames: ${{ inputs.frames || '64' }}"
+            echo "GOPSize: 32"
+            echo "GOPs: 2 when Frames=64"
+            echo "MTS: 1"
+            echo "LFNST: 1"
+            echo
+            grep -E "SUMMARY|Total Frames|^[[:space:]]*[0-9]+[[:space:]]+a[[:space:]]" "$log" || true
+          } | tee "$result_dir/B1_Kimono1_QP${{ matrix.qp }}_summary.txt"
+
+      - name: Upload QP result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-B1-Kimono1-QP${{ matrix.qp }}
+          path: results/B1_Kimono1/QP${{ matrix.qp }}
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 0
+
+      - name: Upload QP summary
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-summary-B1-Kimono1-QP${{ matrix.qp }}
+          path: results/B1_Kimono1/QP${{ matrix.qp }}/B1_Kimono1_QP${{ matrix.qp }}_summary.txt
+          retention-days: 30
+
+  aggregate:
+    name: Collect anchor summaries
+    if: ${{ always() }}
+    needs: anchor
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download completed QP summaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: anchor-summary-B1-Kimono1-QP*
+          path: summaries
+          merge-multiple: true
+
+      - name: Build combined bitrate and PSNR summary
+        shell: bash
+        run: |
+          {
+            echo "VTM Anchor — B1 Kimono1"
+            echo "QP values: 22, 27, 32, 37"
+            echo "Frames per QP: ${{ inputs.frames || '64' }}"
+            echo "GOPSize: 32"
+            echo "GOPs per QP: 2 when Frames=64"
+            echo "MTS: 1"
+            echo "LFNST: 1"
+            echo
+            find summaries -type f -name '*_summary.txt' -print0 |
+              sort -z |
+              while IFS= read -r -d '' summary; do
+                echo "===== $summary ====="
+                cat "$summary"
+                echo
+              done
+          } | tee anchor_summary.txt
+
+      - name: Upload combined anchor summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: Anchor-VTM-B1-Kimono1-2GOP-summary
+          path: anchor_summary.txt
           retention-days: 30
