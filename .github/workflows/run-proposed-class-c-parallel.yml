@@ -3,18 +3,6 @@ name: Run Proposed CD-SATM Class C - All 12 in Parallel
 on:
   workflow_dispatch:
     inputs:
-      c1_url:
-        description: C1 RaceHorses direct YUV/Y4M or public Drive URL
-        required: true
-        type: string
-      c2_url:
-        description: C2 BQMall direct YUV/Y4M or public Drive URL
-        required: true
-        type: string
-      c3_url:
-        description: C3 PartyScene direct YUV/Y4M or public Drive URL
-        required: true
-        type: string
       frames:
         description: Frames per run
         required: true
@@ -40,13 +28,13 @@ jobs:
         include:
           - sequence: C1_RaceHorses
             file: C1_RaceHorses_832x480_30.yuv
-            url: ${{ inputs.c1_url }}
+            url: https://drive.google.com/file/d/1d8FMx_LEGCNSPlY5pu_o5x69Se9lZhkQ/view
           - sequence: C2_BQMall
             file: C2_BQMall_832x480_60.yuv
-            url: ${{ inputs.c2_url }}
+            url: https://drive.google.com/file/d/1dEfl5qIhzokM-mZWVwpCESdefzh2pPji/view
           - sequence: C3_PartyScene
             file: C3_PartyScene_832x480_50.yuv
-            url: ${{ inputs.c3_url }}
+            url: https://drive.google.com/file/d/1_l7Zr3edEHhFGulnYUvUM16hcNTOxz60/view
     steps:
       - uses: actions/checkout@v4
       - name: Download and extract exactly 96 frames
