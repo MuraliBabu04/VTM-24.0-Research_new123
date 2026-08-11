@@ -1,4 +1,4 @@
-name: Run VTM Kimono1 Anchor — 1 GOP
+name: Run VTM Kimono1 Anchor — QP32 64 Frames
 
 on:
   workflow_dispatch:
@@ -9,9 +9,9 @@ on:
         default: https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view?usp=drive_link
         type: string
       frames:
-        description: Number of frames; default 32 = 1 GOP for GOPSize 32
+        description: Number of frames; default 64 = 2 GOPs for GOPSize 32
         required: false
-        default: "32"
+        default: "64"
         type: string
   push:
     branches: [main]
@@ -50,14 +50,14 @@ jobs:
           compression-level: 0
 
   anchor:
-    name: Anchor QP ${{ matrix.qp }} — 1 GOP
+    name: Anchor QP ${{ matrix.qp }} — 64 Frames
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
-        qp: [22, 27, 32, 37]
+        qp: [32]
 
     steps:
       - name: Checkout repository
@@ -69,7 +69,7 @@ jobs:
           name: B1-Kimono1-input
           path: test_sequence
 
-      - name: Verify VTM, input and 1-GOP configuration
+      - name: Verify VTM, input and transform configuration
         run: |
           chmod +x bin/EncoderAppStatic scripts/*.sh
           test -x bin/EncoderAppStatic
@@ -81,7 +81,7 @@ jobs:
 
       - name: Run VTM anchor
         env:
-          FRAMES: ${{ inputs.frames || '32' }}
+          FRAMES: ${{ inputs.frames || '64' }}
         run: scripts/run_anchor_B1_Kimono1.sh "${{ matrix.qp }}"
 
       - name: Extract bitrate and PSNR summary
@@ -93,9 +93,9 @@ jobs:
           {
             echo "VTM Anchor — B1 Kimono1"
             echo "QP: ${{ matrix.qp }}"
-            echo "Frames: ${{ inputs.frames || '32' }}"
+            echo "Frames: ${{ inputs.frames || '64' }}"
             echo "GOPSize: 32"
-            echo "GOPs: 1 when Frames=32"
+            echo "GOPs: 2 when Frames=64"
             echo "MTS: 1"
             echo "LFNST: 1"
             echo
@@ -139,10 +139,10 @@ jobs:
         run: |
           {
             echo "VTM Anchor — B1 Kimono1"
-            echo "QP values: 22, 27, 32, 37"
-            echo "Frames per QP: ${{ inputs.frames || '32' }}"
+            echo "QP: 32"
+            echo "Frames: ${{ inputs.frames || '64' }}"
             echo "GOPSize: 32"
-            echo "GOPs per QP: 1 when Frames=32"
+            echo "GOPs: 2 when Frames=64"
             echo "MTS: 1"
             echo "LFNST: 1"
             echo
@@ -158,6 +158,6 @@ jobs:
       - name: Upload combined anchor summary
         uses: actions/upload-artifact@v4
         with:
-          name: Anchor-VTM-B1-Kimono1-1GOP-summary
+          name: Anchor-VTM-B1-Kimono1-QP32-64Frames-summary
           path: anchor_summary.txt
           retention-days: 30
