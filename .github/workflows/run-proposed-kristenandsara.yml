@@ -38,12 +38,41 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p test_sequence
-          ffmpeg -hide_banner -loglevel error -y \
-            -i "$SEQUENCE_URL" \
-            -frames:v "$FRAMES" \
-            -pix_fmt yuv420p \
-            -f rawvideo \
-            test_sequence/E3_KristenAndSara_1280x720_60.yuv
+          python3 - <<'PY'
+          import os
+          import urllib.request
+
+          url = os.environ["SEQUENCE_URL"]
+          frames = int(os.environ["FRAMES"])
+          width, height = 1280, 720
+          frame_size = width * height * 3 // 2
+          output = "test_sequence/E3_KristenAndSara_1280x720_60.yuv"
+
+          def read_exact(stream, size):
+              chunks = []
+              remaining = size
+              while remaining:
+                  chunk = stream.read(remaining)
+                  if not chunk:
+                      raise EOFError(f"Y4M ended with {remaining} frame bytes missing")
+                  chunks.append(chunk)
+                  remaining -= len(chunk)
+              return b"".join(chunks)
+
+          with urllib.request.urlopen(url, timeout=60) as source, open(output, "wb") as target:
+              header = source.readline()
+              if not header.startswith(b"YUV4MPEG2"):
+                  raise ValueError("Input is not a Y4M stream")
+              if b"W1280" not in header or b"H720" not in header:
+                  raise ValueError(f"Unexpected Y4M dimensions: {header!r}")
+              for index in range(frames):
+                  marker = source.readline()
+                  if not marker.startswith(b"FRAME"):
+                      raise ValueError(f"Missing FRAME marker at frame {index}: {marker!r}")
+                  target.write(read_exact(source, frame_size))
+
+          print(f"Extracted {frames} frames to {output}")
+          PY
           actual_size="$(stat -c%s test_sequence/E3_KristenAndSara_1280x720_60.yuv)"
           expected_size="$((1280 * 720 * 3 / 2 * FRAMES))"
           test "$actual_size" -eq "$expected_size" || {
