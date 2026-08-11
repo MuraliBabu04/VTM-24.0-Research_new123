@@ -32,7 +32,7 @@ python3 "$SIMULATOR" \
   --frames "$FRAMES" \
   --mts 1 \
   --lfnst 1 \
-  2>&1 | tee "$HARDWARE_OUT/B1_Kimono1_QP$QP_power_latency.log"
+  2>&1 | tee "$HARDWARE_OUT/B1_Kimono1_QP${QP}_power_latency.log"
 
 {
   echo "B1 Kimono1 Proposed CD-SATM methodology"
@@ -47,5 +47,5 @@ python3 "$SIMULATOR" \
   grep -E "SUMMARY|Total Frames|^[[:space:]]*[0-9]+[[:space:]]+a[[:space:]]" \
     "$CODEC_OUT/B1_Kimono1_QP$QP.log" || true
   echo
-  cat "$HARDWARE_OUT/B1_Kimono1_QP$QP_power_latency.log"
-} | tee "$OUT/B1_Kimono1_QP$QP_combined_summary.txt"
+  cat "$HARDWARE_OUT/B1_Kimono1_QP${QP}_power_latency.log"
+} | tee "$OUT/B1_Kimono1_QP${QP}_combined_summary.txt"
