@@ -1,0 +1,144 @@
+name: Run Proposed CD-SATM E3 KristenAndSara — QP37 64 Frames
+# Linux cloud workflow: standard VTM coding reference plus CD-SATM hardware model.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sequence_url:
+        description: Direct URL for KristenAndSara_1280x720_60.y4m
+        required: false
+        default: https://media.xiph.org/video/derf/y4m/KristenAndSara_1280x720_60.y4m
+        type: string
+      frames:
+        description: Number of frames to encode and model
+        required: false
+        default: "64"
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-proposed-kristenandsara.yml
+      - scripts/run_proposed_E3_KristenAndSara.sh
+      - cdsatm_des_simulator.py
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare KristenAndSara input
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Extract first 64 YUV420 frames from Xiph Y4M
+        env:
+          SEQUENCE_URL: ${{ inputs.sequence_url || 'https://media.xiph.org/video/derf/y4m/KristenAndSara_1280x720_60.y4m' }}
+          FRAMES: ${{ inputs.frames || '64' }}
+        run: |
+          set -euo pipefail
+          mkdir -p test_sequence
+          ffmpeg -hide_banner -loglevel error -y \
+            -i "$SEQUENCE_URL" \
+            -frames:v "$FRAMES" \
+            -pix_fmt yuv420p \
+            -f rawvideo \
+            test_sequence/E3_KristenAndSara_1280x720_60.yuv
+          actual_size="$(stat -c%s test_sequence/E3_KristenAndSara_1280x720_60.yuv)"
+          expected_size="$((1280 * 720 * 3 / 2 * FRAMES))"
+          test "$actual_size" -eq "$expected_size" || {
+            echo "Unexpected YUV size: $actual_size bytes; expected $expected_size." >&2
+            exit 1
+          }
+
+      - name: Share input with QP37 job
+        uses: actions/upload-artifact@v4
+        with:
+          name: E3-KristenAndSara-input
+          path: test_sequence/E3_KristenAndSara_1280x720_60.yuv
+          retention-days: 1
+          compression-level: 0
+
+  proposed:
+    name: Proposed E3 KristenAndSara QP37
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download KristenAndSara input
+        uses: actions/download-artifact@v4
+        with:
+          name: E3-KristenAndSara-input
+          path: test_sequence
+
+      - name: Verify Linux VTM and scripts
+        run: |
+          chmod +x bin/EncoderAppStatic scripts/*.sh
+          test -x bin/EncoderAppStatic
+          test -f cfg/per-sequence/KristenAndSara.cfg
+          test -f test_sequence/E3_KristenAndSara_1280x720_60.yuv
+          test "$(stat -c%s test_sequence/E3_KristenAndSara_1280x720_60.yuv)" -eq 88473600
+
+      - name: Run VTM reference and proposed CD-SATM model
+        env:
+          FRAMES: ${{ inputs.frames || '64' }}
+        run: scripts/run_proposed_E3_KristenAndSara.sh 37
+
+      - name: Upload proposed QP37 result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-E3-KristenAndSara-QP37
+          path: results/proposed/E3_KristenAndSara/QP37
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: warn
+
+      - name: Upload proposed QP37 summary
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-summary-E3-KristenAndSara-QP37
+          path: results/proposed/E3_KristenAndSara/QP37/E3_KristenAndSara_QP37_combined_summary.txt
+          retention-days: 30
+
+  aggregate:
+    name: Collect proposed E3 summary
+    if: ${{ always() }}
+    needs: proposed
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download QP37 summary
+        uses: actions/download-artifact@v4
+        with:
+          name: proposed-summary-E3-KristenAndSara-QP37
+          path: summaries
+
+      - name: Build combined bitrate, PSNR and power summary
+        shell: bash
+        run: |
+          {
+            echo "E3 KristenAndSara: Standard VTM coding reference + Proposed CD-SATM hardware model"
+            echo "QP: 37"
+            echo "Frames: ${{ inputs.frames || '64' }}"
+            echo "MTS: 1"
+            echo "LFNST: 1"
+            echo
+            echo "Bitrate and PSNR are measured by standard VTM."
+            echo "Power and latency are modeled by cdsatm_des_simulator.py."
+            echo "A modified Proposed VTM encoder was not supplied."
+            echo
+            cat summaries/E3_KristenAndSara_QP37_combined_summary.txt
+          } | tee proposed_E3_KristenAndSara_QP37_summary.txt
+
+      - name: Upload combined proposed summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: Proposed-CD-SATM-E3-KristenAndSara-QP37-summary
+          path: proposed_E3_KristenAndSara_QP37_summary.txt
+          retention-days: 30
