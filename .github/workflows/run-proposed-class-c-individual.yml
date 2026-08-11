@@ -1,0 +1,90 @@
+name: Run Proposed CD-SATM Class C - Individual
+
+on:
+  workflow_dispatch:
+    inputs:
+      sequence:
+        description: Class-C sequence
+        required: true
+        default: C1_RaceHorses
+        type: choice
+        options:
+          - C1_RaceHorses
+          - C2_BQMall
+          - C3_PartyScene
+      qp:
+        description: Quantization parameter
+        required: true
+        default: "22"
+        type: choice
+        options:
+          - "22"
+          - "27"
+          - "32"
+          - "37"
+      sequence_url:
+        description: Direct YUV/Y4M URL or public Google Drive sharing URL
+        required: true
+        type: string
+      frames:
+        description: Frames to encode
+        required: true
+        default: "96"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: ${{ inputs.sequence }} QP ${{ inputs.qp }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build measured VTM encoder
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target EncoderApp --parallel 2
+          test -x bin/EncoderAppStatic
+      - name: Prepare selected 96-frame input
+        env:
+          SEQUENCE: ${{ inputs.sequence }}
+          SEQUENCE_URL: ${{ inputs.sequence_url }}
+          FRAMES: ${{ inputs.frames }}
+        run: |
+          python3 -m pip install --disable-pip-version-check gdown
+          case "$SEQUENCE" in
+            C1_RaceHorses) file=C1_RaceHorses_832x480_30.yuv ;;
+            C2_BQMall) file=C2_BQMall_832x480_60.yuv ;;
+            C3_PartyScene) file=C3_PartyScene_832x480_50.yuv ;;
+            *) echo "Unsupported sequence: $SEQUENCE" >&2; exit 2 ;;
+          esac
+          python3 scripts/prepare_class_c_input.py \
+            --url "$SEQUENCE_URL" --output "Test_Sequences/$file" --frames "$FRAMES"
+      - name: Run individual Class-C sequence/QP
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/bin/EncoderAppStatic
+        run: |
+          chmod +x bin/EncoderAppStatic scripts/run_proposed_class_c.sh
+          scripts/run_proposed_class_c.sh \
+            "${{ inputs.sequence }}" "${{ inputs.qp }}" "${{ inputs.frames }}"
+      - name: Add result summary
+        if: always()
+        run: |
+          summary="results/Class_C/${{ inputs.sequence }}/QP${{ inputs.qp }}/${{ inputs.sequence }}_QP${{ inputs.qp }}_summary.txt"
+          if [[ -f "$summary" ]]; then
+            {
+              echo '```text'
+              cat "$summary"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload individual result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-${{ inputs.sequence }}-QP${{ inputs.qp }}
+          path: results/Class_C/${{ inputs.sequence }}/QP${{ inputs.qp }}/
+          if-no-files-found: warn
+          retention-days: 30
