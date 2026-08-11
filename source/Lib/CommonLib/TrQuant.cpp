@@ -37,6 +37,7 @@
 
 #include "TrQuant.h"
 #include "TrQuant_EMT.h"
+#include "CDSATMStats.h"
 
 #include "UnitTools.h"
 #include "ContextModelling.h"
@@ -811,6 +812,26 @@ void TrQuant::xT( const TransformUnit &tu, const ComponentID &compID, const CPel
     TCoeff *tmp = (TCoeff *) alloca(width * height * sizeof(TCoeff));
 
     m_fwdTx[trTypeHor][transformWidthIndex](block, tmp, shift_1st, height, 0, skipWidth);
+
+    if (cdsatm::tracker().enabled())
+    {
+      int activeColumns = 0;
+      for (int column = 0; column < width; ++column)
+      {
+        bool columnIsActive = false;
+        for (int row = 0; row < height; ++row)
+        {
+          if (tmp[column * height + row] != 0)
+          {
+            columnIsActive = true;
+            break;
+          }
+        }
+        activeColumns += columnIsActive ? 1 : 0;
+      }
+      cdsatm::tracker().record(width, height, int(compID), int(trTypeHor), int(trTypeVer), activeColumns);
+    }
+
     m_fwdTx[trTypeVer][transformHeightIndex](tmp, dstCoeff.buf, shift_2nd, width, skipWidth, skipHeight);
   }
   else if( height == 1 ) //1-D horizontal transform
