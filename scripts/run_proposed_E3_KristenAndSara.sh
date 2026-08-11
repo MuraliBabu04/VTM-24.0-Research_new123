@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Linux GitHub Actions runner for E3 KristenAndSara, QP37, 64 frames.
 set -euo pipefail
 
 QP="${1:-37}"
