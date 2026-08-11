@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <map>
 #include <mutex>
+#include <string>
 #include <tuple>
 
 namespace cdsatm
@@ -101,3 +102,4 @@ inline Tracker& tracker()
   return instance;
 }
 }
+
