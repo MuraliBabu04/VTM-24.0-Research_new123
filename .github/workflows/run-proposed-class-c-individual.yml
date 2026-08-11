@@ -22,10 +22,6 @@ on:
           - "27"
           - "32"
           - "37"
-      sequence_url:
-        description: Direct YUV/Y4M URL or public Google Drive sharing URL
-        required: true
-        type: string
       frames:
         description: Frames to encode
         required: true
@@ -50,18 +46,26 @@ jobs:
       - name: Prepare selected 96-frame input
         env:
           SEQUENCE: ${{ inputs.sequence }}
-          SEQUENCE_URL: ${{ inputs.sequence_url }}
           FRAMES: ${{ inputs.frames }}
         run: |
           python3 -m pip install --disable-pip-version-check gdown
           case "$SEQUENCE" in
-            C1_RaceHorses) file=C1_RaceHorses_832x480_30.yuv ;;
-            C2_BQMall) file=C2_BQMall_832x480_60.yuv ;;
-            C3_PartyScene) file=C3_PartyScene_832x480_50.yuv ;;
+            C1_RaceHorses)
+              file=C1_RaceHorses_832x480_30.yuv
+              url=https://drive.google.com/file/d/1d8FMx_LEGCNSPlY5pu_o5x69Se9lZhkQ/view
+              ;;
+            C2_BQMall)
+              file=C2_BQMall_832x480_60.yuv
+              url=https://drive.google.com/file/d/1dEfl5qIhzokM-mZWVwpCESdefzh2pPji/view
+              ;;
+            C3_PartyScene)
+              file=C3_PartyScene_832x480_50.yuv
+              url=https://drive.google.com/file/d/1_l7Zr3edEHhFGulnYUvUM16hcNTOxz60/view
+              ;;
             *) echo "Unsupported sequence: $SEQUENCE" >&2; exit 2 ;;
           esac
           python3 scripts/prepare_class_c_input.py \
-            --url "$SEQUENCE_URL" --output "Test_Sequences/$file" --frames "$FRAMES"
+            --url "$url" --output "Test_Sequences/$file" --frames "$FRAMES"
       - name: Run individual Class-C sequence/QP
         env:
           VTM_ENCODER: ${{ github.workspace }}/bin/EncoderAppStatic
