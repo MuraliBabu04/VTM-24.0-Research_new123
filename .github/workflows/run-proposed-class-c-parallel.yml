@@ -1,0 +1,131 @@
+name: Run Proposed CD-SATM Class C - All 12 in Parallel
+
+on:
+  workflow_dispatch:
+    inputs:
+      c1_url:
+        description: C1 RaceHorses direct YUV/Y4M or public Drive URL
+        required: true
+        type: string
+      c2_url:
+        description: C2 BQMall direct YUV/Y4M or public Drive URL
+        required: true
+        type: string
+      c3_url:
+        description: C3 PartyScene direct YUV/Y4M or public Drive URL
+        required: true
+        type: string
+      frames:
+        description: Frames per run
+        required: true
+        default: "96"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proposed-class-c-parallel-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-input:
+    name: Prepare ${{ matrix.sequence }} input
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - sequence: C1_RaceHorses
+            file: C1_RaceHorses_832x480_30.yuv
+            url: ${{ inputs.c1_url }}
+          - sequence: C2_BQMall
+            file: C2_BQMall_832x480_60.yuv
+            url: ${{ inputs.c2_url }}
+          - sequence: C3_PartyScene
+            file: C3_PartyScene_832x480_50.yuv
+            url: ${{ inputs.c3_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and extract exactly 96 frames
+        env:
+          SEQUENCE_URL: ${{ matrix.url }}
+          FILE: ${{ matrix.file }}
+          FRAMES: ${{ inputs.frames }}
+        run: |
+          python3 -m pip install --disable-pip-version-check gdown
+          python3 scripts/prepare_class_c_input.py \
+            --url "$SEQUENCE_URL" --output "Test_Sequences/$FILE" --frames "$FRAMES"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: class-c-${{ matrix.sequence }}-${{ inputs.frames }}f
+          path: Test_Sequences/${{ matrix.file }}
+          retention-days: 1
+          compression-level: 0
+
+  build-vtm:
+    name: Build measured VTM
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure and build EncoderApp
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target EncoderApp --parallel 2
+          test -x bin/EncoderAppStatic
+      - uses: actions/upload-artifact@v4
+        with:
+          name: measured-vtm-encoder-class-c
+          path: bin/EncoderAppStatic
+          retention-days: 1
+
+  encode:
+    name: ${{ matrix.sequence }} QP ${{ matrix.qp }}
+    needs: [prepare-input, build-vtm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        sequence: [C1_RaceHorses, C2_BQMall, C3_PartyScene]
+        qp: [22, 27, 32, 37]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: measured-vtm-encoder-class-c
+          path: instrumented-vtm
+      - uses: actions/download-artifact@v4
+        with:
+          name: class-c-${{ matrix.sequence }}-${{ inputs.frames }}f
+          path: Test_Sequences
+      - name: Run independent Class-C sequence/QP job
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/instrumented-vtm/EncoderAppStatic
+        run: |
+          chmod +x "$VTM_ENCODER" scripts/run_proposed_class_c.sh
+          scripts/run_proposed_class_c.sh \
+            "${{ matrix.sequence }}" "${{ matrix.qp }}" "${{ inputs.frames }}"
+      - name: Add sequence/QP summary
+        if: always()
+        run: |
+          summary="results/Class_C/${{ matrix.sequence }}/QP${{ matrix.qp }}/${{ matrix.sequence }}_QP${{ matrix.qp }}_summary.txt"
+          if [[ -f "$summary" ]]; then
+            {
+              echo '```text'
+              cat "$summary"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload sequence/QP result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-${{ matrix.sequence }}-QP${{ matrix.qp }}
+          path: results/Class_C/${{ matrix.sequence }}/QP${{ matrix.qp }}/
+          if-no-files-found: warn
+          retention-days: 30
