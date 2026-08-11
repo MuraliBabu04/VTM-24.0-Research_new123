@@ -1,0 +1,137 @@
+name: Run Proposed CD-SATM E1 FourPeople - Measured Sparsity
+
+on:
+  workflow_dispatch:
+    inputs:
+      frames:
+        description: Number of frames to encode
+        required: true
+        default: "64"
+      sequence_url:
+        description: FourPeople Y4M source URL
+        required: true
+        default: https://media.xiph.org/video/derf/y4m/FourPeople_1280x720_60.y4m
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-proposed-fourpeople-measured.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proposed-fourpeople-measured-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-input:
+    name: Prepare FourPeople input
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download and extract first frames
+        env:
+          FRAMES: ${{ inputs.frames || '64' }}
+          SOURCE_URL: ${{ inputs.sequence_url || 'https://media.xiph.org/video/derf/y4m/FourPeople_1280x720_60.y4m' }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import urllib.request
+
+          frames = int(os.environ["FRAMES"])
+          frame_bytes = 1280 * 720 * 3 // 2
+          url = os.environ["SOURCE_URL"]
+          output = "E1_FourPeople_1280x720_60.yuv"
+
+          with urllib.request.urlopen(url, timeout=60) as source, open(output, "wb") as target:
+              header = source.readline()
+              if not header.startswith(b"YUV4MPEG2 "):
+                  raise SystemExit("Source is not a Y4M stream")
+              for index in range(frames):
+                  marker = source.readline()
+                  if not marker.startswith(b"FRAME"):
+                      raise SystemExit(f"Missing Y4M frame marker at frame {index}")
+                  remaining = frame_bytes
+                  while remaining:
+                      chunk = source.read(min(1024 * 1024, remaining))
+                      if not chunk:
+                          raise SystemExit(f"Unexpected EOF at frame {index}")
+                      target.write(chunk)
+                      remaining -= len(chunk)
+
+          expected = frames * frame_bytes
+          actual = os.path.getsize(output)
+          if actual != expected:
+              raise SystemExit(f"YUV size mismatch: got {actual}, expected {expected}")
+          print(f"Prepared {frames} frames ({actual:,} bytes)")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fourpeople-input-${{ inputs.frames || '64' }}f
+          path: E1_FourPeople_1280x720_60.yuv
+          retention-days: 1
+
+  build-vtm:
+    name: Build measured VTM
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure and build EncoderApp
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target EncoderApp --parallel 2
+          test -x bin/EncoderAppStatic
+      - uses: actions/upload-artifact@v4
+        with:
+          name: measured-vtm-encoder
+          path: bin/EncoderAppStatic
+          retention-days: 1
+
+  encode:
+    name: FourPeople QP ${{ matrix.qp }}
+    needs: [prepare-input, build-vtm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        qp: [22, 27, 32, 37]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: measured-vtm-encoder
+          path: instrumented-vtm
+      - uses: actions/download-artifact@v4
+        with:
+          name: fourpeople-input-${{ inputs.frames || '64' }}f
+          path: Test_Sequences
+      - name: Run independent measured QP job
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/instrumented-vtm/EncoderAppStatic
+          FOURPEOPLE_YUV: ${{ github.workspace }}/Test_Sequences/E1_FourPeople_1280x720_60.yuv
+          RESULT_DIR: ${{ github.workspace }}/results/E1_FourPeople/QP${{ matrix.qp }}
+        run: |
+          chmod +x "$VTM_ENCODER" run_proposed_E1_FourPeople_measured.sh
+          ./run_proposed_E1_FourPeople_measured.sh "${{ matrix.qp }}" "${{ inputs.frames || '64' }}"
+      - name: Add QP summary
+        if: always()
+        run: |
+          summary="results/E1_FourPeople/QP${{ matrix.qp }}/E1_FourPeople_QP${{ matrix.qp }}_summary.txt"
+          if [[ -f "$summary" ]]; then
+            {
+              echo '```text'
+              cat "$summary"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload QP result artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-E1-FourPeople-QP${{ matrix.qp }}-measured
+          path: results/E1_FourPeople/QP${{ matrix.qp }}/
+          if-no-files-found: warn
+          retention-days: 30
