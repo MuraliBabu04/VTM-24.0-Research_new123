@@ -1,0 +1,125 @@
+name: Reusable Proposed E3 KristenAndSara
+
+on:
+  workflow_call:
+    inputs:
+      qp:
+        required: true
+        type: string
+      frames:
+        required: false
+        default: "64"
+        type: string
+      sequence_url:
+        required: false
+        default: https://media.xiph.org/video/derf/y4m/KristenAndSara_1280x720_60.y4m
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare KristenAndSara QP${{ inputs.qp }} input
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Extract first 64 YUV420 frames from Xiph Y4M
+        env:
+          SEQUENCE_URL: ${{ inputs.sequence_url }}
+          FRAMES: ${{ inputs.frames }}
+        run: |
+          set -euo pipefail
+          mkdir -p test_sequence
+          python3 - <<'PY'
+          import os
+          import urllib.request
+
+          url = os.environ["SEQUENCE_URL"]
+          frames = int(os.environ["FRAMES"])
+          width, height = 1280, 720
+          frame_size = width * height * 3 // 2
+          output = "test_sequence/E3_KristenAndSara_1280x720_60.yuv"
+
+          def read_exact(stream, size):
+              chunks = []
+              remaining = size
+              while remaining:
+                  chunk = stream.read(remaining)
+                  if not chunk:
+                      raise EOFError(f"Y4M ended with {remaining} frame bytes missing")
+                  chunks.append(chunk)
+                  remaining -= len(chunk)
+              return b"".join(chunks)
+
+          with urllib.request.urlopen(url, timeout=60) as source, open(output, "wb") as target:
+              header = source.readline()
+              if not header.startswith(b"YUV4MPEG2"):
+                  raise ValueError("Input is not a Y4M stream")
+              if b"W1280" not in header or b"H720" not in header:
+                  raise ValueError(f"Unexpected Y4M dimensions: {header!r}")
+              for index in range(frames):
+                  marker = source.readline()
+                  if not marker.startswith(b"FRAME"):
+                      raise ValueError(f"Missing FRAME marker at frame {index}: {marker!r}")
+                  target.write(read_exact(source, frame_size))
+
+          print(f"Extracted {frames} frames to {output}")
+          PY
+          actual_size="$(stat -c%s test_sequence/E3_KristenAndSara_1280x720_60.yuv)"
+          expected_size="$((1280 * 720 * 3 / 2 * FRAMES))"
+          test "$actual_size" -eq "$expected_size"
+
+      - name: Share input with Proposed job
+        uses: actions/upload-artifact@v4
+        with:
+          name: E3-KristenAndSara-QP${{ inputs.qp }}-input
+          path: test_sequence/E3_KristenAndSara_1280x720_60.yuv
+          retention-days: 1
+          compression-level: 0
+
+  proposed:
+    name: Proposed E3 KristenAndSara QP${{ inputs.qp }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download KristenAndSara input
+        uses: actions/download-artifact@v4
+        with:
+          name: E3-KristenAndSara-QP${{ inputs.qp }}-input
+          path: test_sequence
+
+      - name: Verify Linux VTM and inputs
+        run: |
+          chmod +x bin/EncoderAppStatic scripts/*.sh
+          test -x bin/EncoderAppStatic
+          test -f cfg/per-sequence/KristenAndSara.cfg
+          test -f test_sequence/E3_KristenAndSara_1280x720_60.yuv
+          test "$(stat -c%s test_sequence/E3_KristenAndSara_1280x720_60.yuv)" -eq 88473600
+
+      - name: Run VTM reference and proposed CD-SATM model
+        env:
+          FRAMES: ${{ inputs.frames }}
+        run: scripts/run_proposed_E3_KristenAndSara_QP27_QP32.sh "${{ inputs.qp }}"
+
+      - name: Upload proposed result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-E3-KristenAndSara-QP${{ inputs.qp }}
+          path: results/proposed/E3_KristenAndSara/QP${{ inputs.qp }}
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: warn
+
+      - name: Upload proposed summary
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-summary-E3-KristenAndSara-QP${{ inputs.qp }}
+          path: results/proposed/E3_KristenAndSara/QP${{ inputs.qp }}/E3_KristenAndSara_QP${{ inputs.qp }}_combined_summary.txt
+          retention-days: 30
