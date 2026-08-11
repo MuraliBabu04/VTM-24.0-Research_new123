@@ -1,0 +1,118 @@
+name: Run Proposed CD-SATM Class D - Measured Sparsity
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-proposed-class-d-measured.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proposed-class-d-measured-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-input:
+    name: Prepare ${{ matrix.sequence }} input
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - sequence: D1_RaceHorses
+            file: D1_RaceHorses_416x240_30.yuv
+            sha256: 7192decb5ab38d0367afcce4c3ca77c6fc06b11d0d50de2c27eceda8ecd24951
+          - sequence: D2_BQSquare
+            file: D2_BQSquare_416x240_60.yuv
+            sha256: 2ea8a868496358ab11761fca9b524eb169b369fe933472650bc499262b31e374
+          - sequence: D3_BlowingBubbles
+            file: D3_BlowingBubbles_416x240_50.yuv
+            sha256: 34de0fb4fb637a53994cfc67db8b22d01fe9b54e207db20d25683e72789682d5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct supplied 64-frame YUV
+        env:
+          FILE: ${{ matrix.file }}
+          EXPECTED_SHA256: ${{ matrix.sha256 }}
+        run: |
+          mkdir -p Test_Sequences
+          for part in test_sequences/class_d/"${FILE}".gz.b64.part*.b64; do
+            base64 --decode "$part"
+          done | gzip -dc > "Test_Sequences/${FILE}"
+          test "$(stat -c %s "Test_Sequences/${FILE}")" -eq 9584640
+          echo "${EXPECTED_SHA256}  Test_Sequences/${FILE}" | sha256sum --check --strict
+      - uses: actions/upload-artifact@v4
+        with:
+          name: class-d-${{ matrix.sequence }}-64f
+          path: Test_Sequences/${{ matrix.file }}
+          retention-days: 1
+
+  build-vtm:
+    name: Build measured VTM
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure and build EncoderApp
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target EncoderApp --parallel 2
+          test -x bin/EncoderAppStatic
+      - uses: actions/upload-artifact@v4
+        with:
+          name: measured-vtm-encoder-class-d
+          path: bin/EncoderAppStatic
+          retention-days: 1
+
+  encode:
+    name: ${{ matrix.sequence }} QP ${{ matrix.qp }}
+    needs: [prepare-input, build-vtm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        sequence: [D1_RaceHorses, D2_BQSquare, D3_BlowingBubbles]
+        qp: [22, 27, 32, 37]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: measured-vtm-encoder-class-d
+          path: instrumented-vtm
+      - uses: actions/download-artifact@v4
+        with:
+          name: class-d-${{ matrix.sequence }}-64f
+          path: Test_Sequences
+      - name: Run independent measured sequence/QP job
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/instrumented-vtm/EncoderAppStatic
+          RESULT_DIR: ${{ github.workspace }}/results/Class_D/${{ matrix.sequence }}/QP${{ matrix.qp }}
+        run: |
+          chmod +x "$VTM_ENCODER" run_proposed_class_d_measured.sh
+          ./run_proposed_class_d_measured.sh "${{ matrix.sequence }}" "${{ matrix.qp }}" 64
+      - name: Add sequence/QP summary
+        if: always()
+        run: |
+          summary="results/Class_D/${{ matrix.sequence }}/QP${{ matrix.qp }}/${{ matrix.sequence }}_QP${{ matrix.qp }}_summary.txt"
+          if [[ -f "$summary" ]]; then
+            {
+              echo '```text'
+              cat "$summary"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload sequence/QP result artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-${{ matrix.sequence }}-QP${{ matrix.qp }}-measured
+          path: results/Class_D/${{ matrix.sequence }}/QP${{ matrix.qp }}/
+          if-no-files-found: warn
+          retention-days: 30
