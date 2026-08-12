@@ -67,7 +67,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", required=True)
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--frames", type=int, default=64)
+    parser.add_argument("--frames", type=int, default=32)
     args = parser.parse_args()
 
     if args.frames <= 0:
