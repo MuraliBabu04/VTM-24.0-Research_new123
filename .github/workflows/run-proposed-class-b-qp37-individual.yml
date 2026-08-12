@@ -15,7 +15,7 @@ on:
       frames:
         description: Frames to encode
         required: true
-        default: "64"
+        default: "32"
         type: string
 
 permissions:
@@ -33,7 +33,7 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target EncoderApp --parallel 2
           test -x bin/EncoderAppStatic
-      - name: Prepare selected 64-frame input
+      - name: Prepare selected 32-frame input
         env:
           SEQUENCE: ${{ inputs.sequence }}
           FRAMES: ${{ inputs.frames }}
