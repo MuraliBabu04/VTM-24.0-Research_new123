@@ -1,0 +1,67 @@
+name: Validate CD-SATM Bit-Exact VTM Integration
+
+on:
+  push:
+    branches:
+      - agent/cdsatm-bitexact-vtm
+    paths:
+      - source/Lib/CommonLib/CDSATMStats.h
+      - source/Lib/CommonLib/TrQuant.cpp
+      - scripts/analyze_cdsatm_bitexact.py
+      - scripts/run_cdsatm_bitexact_class_c.sh
+      - .github/workflows/validate-cdsatm-bitexact.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cdsatm-bitexact-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-smoke-test:
+    name: Build and verify one deterministic frame
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build VTM encoder and decoder
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target EncoderApp DecoderApp --parallel 2
+          test -x bin/EncoderAppStatic
+          test -x bin/DecoderAppStatic
+
+      - name: Create deterministic Class-C smoke input
+        run: |
+          mkdir -p Test_Sequences
+          truncate -s $((832 * 480 * 3 / 2)) Test_Sequences/C1_RaceHorses_832x480_30.yuv
+
+      - name: Run anchor, integrated zero-skip, and decoder comparisons
+        run: |
+          chmod +x scripts/run_cdsatm_bitexact_class_c.sh
+          scripts/run_cdsatm_bitexact_class_c.sh C1_RaceHorses 37 1
+
+      - name: Publish verification summary
+        if: always()
+        run: |
+          summary=results/BitExact_Class_C/C1_RaceHorses/QP37/C1_RaceHorses_QP37_summary.txt
+          if [[ -f "$summary" ]]; then
+            {
+              echo '## CD-SATM bit-exact smoke verification'
+              echo
+              echo '~~~text'
+              cat "$summary"
+              echo '~~~'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdsatm-bitexact-smoke-evidence
+          path: results/BitExact_Class_C/
+          if-no-files-found: error
+          retention-days: 30
