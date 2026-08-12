@@ -863,7 +863,7 @@ void TrQuant::xT( const TransformUnit &tu, const ComponentID &compID, const CPel
         // lines to be a multiple of four. Pad the packed active set with zero
         // lines to that granularity; only genuine active outputs are scattered.
         const int processedColumns =
-          width >= 4 ? std::min(width, (activeColumns + 3) & ~3) : activeColumns;
+          width >= 4 ? std::min(width, (activeColumns + 3) & ~3) : width;
         m_fwdTx[trTypeVer][transformHeightIndex](packedInput, packedOutput, shift_2nd, width,
                                                  width - processedColumns, skipHeight);
 
