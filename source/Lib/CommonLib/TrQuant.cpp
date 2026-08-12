@@ -813,10 +813,17 @@ void TrQuant::xT( const TransformUnit &tu, const ComponentID &compID, const CPel
 
     m_fwdTx[trTypeHor][transformWidthIndex](block, tmp, shift_1st, height, 0, skipWidth);
 
-    if (cdsatm::tracker().enabled())
+    const bool measureSparsity = cdsatm::tracker().enabled();
+    const bool verifyZeroSkip  = cdsatm::tracker().verificationEnabled();
+    const bool useZeroSkip     = cdsatm::tracker().zeroSkipEnabled() || verifyZeroSkip;
+
+    if (measureSparsity || useZeroSkip)
     {
+      int activeColumnIndices[MAX_TB_SIZEY];
       int activeColumns = 0;
-      for (int column = 0; column < width; ++column)
+      const int activeColumnLimit = width - skipWidth;
+
+      for (int column = 0; column < activeColumnLimit; ++column)
       {
         bool columnIsActive = false;
         for (int row = 0; row < height; ++row)
@@ -827,12 +834,73 @@ void TrQuant::xT( const TransformUnit &tu, const ComponentID &compID, const CPel
             break;
           }
         }
-        activeColumns += columnIsActive ? 1 : 0;
-      }
-      cdsatm::tracker().record(width, height, int(compID), int(trTypeHor), int(trTypeVer), activeColumns);
-    }
 
-    m_fwdTx[trTypeVer][transformHeightIndex](tmp, dstCoeff.buf, shift_2nd, width, skipWidth, skipHeight);
+        if (columnIsActive)
+        {
+          activeColumnIndices[activeColumns++] = column;
+        }
+      }
+
+      cdsatm::tracker().record(width, height, int(compID), int(trTypeHor), int(trTypeVer), activeColumns);
+
+      if (useZeroSkip)
+      {
+        TCoeff* packedInput  = (TCoeff*) alloca(width * height * sizeof(TCoeff));
+        TCoeff* packedOutput = (TCoeff*) alloca(width * height * sizeof(TCoeff));
+        std::memset(packedInput, 0, width * height * sizeof(TCoeff));
+        std::memset(packedOutput, 0, width * height * sizeof(TCoeff));
+        std::memset(dstCoeff.buf, 0, width * height * sizeof(TCoeff));
+
+        for (int packedColumn = 0; packedColumn < activeColumns; ++packedColumn)
+        {
+          const int sourceColumn = activeColumnIndices[packedColumn];
+          std::memcpy(packedInput + packedColumn * height, tmp + sourceColumn * height,
+                      height * sizeof(TCoeff));
+        }
+
+        m_fwdTx[trTypeVer][transformHeightIndex](packedInput, packedOutput, shift_2nd, width,
+                                                 width - activeColumns, skipHeight);
+
+        for (int coefficient = 0; coefficient < height; ++coefficient)
+        {
+          for (int packedColumn = 0; packedColumn < activeColumns; ++packedColumn)
+          {
+            const int destinationColumn = activeColumnIndices[packedColumn];
+            dstCoeff.buf[coefficient * width + destinationColumn] =
+              packedOutput[coefficient * width + packedColumn];
+          }
+        }
+
+        if (verifyZeroSkip)
+        {
+          TCoeff* referenceOutput = (TCoeff*) alloca(width * height * sizeof(TCoeff));
+          m_fwdTx[trTypeVer][transformHeightIndex](tmp, referenceOutput, shift_2nd, width, skipWidth, skipHeight);
+
+          uint64_t mismatches = 0;
+          uint64_t maxAbsError = 0;
+          for (int coefficient = 0; coefficient < width * height; ++coefficient)
+          {
+            const int64_t difference =
+              int64_t(dstCoeff.buf[coefficient]) - int64_t(referenceOutput[coefficient]);
+            const uint64_t absError =
+              difference < 0 ? uint64_t(-difference) : uint64_t(difference);
+            mismatches += difference != 0 ? 1 : 0;
+            maxAbsError = std::max(maxAbsError, absError);
+          }
+
+          cdsatm::tracker().recordVerification(width, height, int(compID), int(trTypeHor), int(trTypeVer),
+                                               uint64_t(width) * uint64_t(height), mismatches, maxAbsError);
+        }
+      }
+      else
+      {
+        m_fwdTx[trTypeVer][transformHeightIndex](tmp, dstCoeff.buf, shift_2nd, width, skipWidth, skipHeight);
+      }
+    }
+    else
+    {
+      m_fwdTx[trTypeVer][transformHeightIndex](tmp, dstCoeff.buf, shift_2nd, width, skipWidth, skipHeight);
+    }
   }
   else if( height == 1 ) //1-D horizontal transform
   {
