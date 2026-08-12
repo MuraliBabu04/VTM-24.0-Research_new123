@@ -859,8 +859,13 @@ void TrQuant::xT( const TransformUnit &tu, const ComponentID &compID, const CPel
                       height * sizeof(TCoeff));
         }
 
+        // The optimized x86 transform kernels require the number of skipped input
+        // lines to be a multiple of four. Pad the packed active set with zero
+        // lines to that granularity; only genuine active outputs are scattered.
+        const int processedColumns =
+          width >= 4 ? std::min(width, (activeColumns + 3) & ~3) : activeColumns;
         m_fwdTx[trTypeVer][transformHeightIndex](packedInput, packedOutput, shift_2nd, width,
-                                                 width - activeColumns, skipHeight);
+                                                 width - processedColumns, skipHeight);
 
         for (int coefficient = 0; coefficient < height; ++coefficient)
         {
