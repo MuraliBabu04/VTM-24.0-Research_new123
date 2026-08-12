@@ -1,0 +1,121 @@
+name: Run Proposed CD-SATM Class B - Three QP22 in Parallel
+
+on:
+  workflow_dispatch:
+    inputs:
+      frames:
+        description: Frames per run
+        required: true
+        default: "32"
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-proposed-class-b-qp22-parallel.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proposed-class-b-qp22-parallel-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare-input:
+    name: Prepare ${{ matrix.sequence }} input
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - sequence: B1_Kimono1
+            file: B1_Kimono1_1920x1080_24.yuv
+            url: https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view
+          - sequence: B2_ParkScene
+            file: B2_ParkScene_1920x1080_24.yuv
+            url: https://drive.google.com/file/d/1T6bD9NgeOSTIHzulcB2LOcxKUBA_eJcg/view
+          - sequence: B3_Cactus
+            file: B3_Cactus_1920x1080_50.yuv
+            url: https://drive.google.com/file/d/19CIbt-C0yFxJAPZSx5JWQsFQ9Hhb13ao/view
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and extract exactly 32 frames
+        env:
+          SEQUENCE_URL: ${{ matrix.url }}
+          FILE: ${{ matrix.file }}
+          FRAMES: ${{ inputs.frames || '32' }}
+        run: |
+          python3 -m pip install --disable-pip-version-check gdown
+          python3 scripts/prepare_class_b_input.py \
+            --url "$SEQUENCE_URL" --output "Test_Sequences/$FILE" --frames "$FRAMES"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: class-b-${{ matrix.sequence }}-${{ inputs.frames || '32' }}f
+          path: Test_Sequences/${{ matrix.file }}
+          retention-days: 1
+          compression-level: 0
+
+  build-vtm:
+    name: Build measured VTM
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure and build EncoderApp
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target EncoderApp --parallel 2
+          test -x bin/EncoderAppStatic
+      - uses: actions/upload-artifact@v4
+        with:
+          name: measured-vtm-encoder-class-b-qp22
+          path: bin/EncoderAppStatic
+          retention-days: 1
+
+  encode:
+    name: ${{ matrix.sequence }} QP22
+    needs: [prepare-input, build-vtm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        sequence: [B1_Kimono1, B2_ParkScene, B3_Cactus]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: measured-vtm-encoder-class-b-qp22
+          path: instrumented-vtm
+      - uses: actions/download-artifact@v4
+        with:
+          name: class-b-${{ matrix.sequence }}-${{ inputs.frames || '32' }}f
+          path: Test_Sequences
+      - name: Run independent Class-B QP22 job
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/instrumented-vtm/EncoderAppStatic
+        run: |
+          chmod +x "$VTM_ENCODER" scripts/run_proposed_class_b_qp22.sh
+          scripts/run_proposed_class_b_qp22.sh "${{ matrix.sequence }}" "${{ inputs.frames || '32' }}"
+      - name: Add sequence summary
+        if: always()
+        run: |
+          summary="results/Class_B/${{ matrix.sequence }}/QP22/${{ matrix.sequence }}_QP22_summary.txt"
+          if [[ -f "$summary" ]]; then
+            {
+              echo '```text'
+              sed -n '1,$p' "$summary"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload sequence result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-${{ matrix.sequence }}-QP22-measured
+          path: results/Class_B/${{ matrix.sequence }}/QP22/
+          if-no-files-found: warn
+          retention-days: 30
