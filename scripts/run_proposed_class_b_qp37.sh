@@ -3,7 +3,7 @@ set -euo pipefail
 
 SEQUENCE="${1:?Usage: $0 <B1_Kimono1|B2_ParkScene|B3_Cactus> [frames]}"
 QP=37
-FRAMES="${2:-64}"
+FRAMES="${2:-32}"
 
 case "$SEQUENCE" in
   B1_Kimono1)
