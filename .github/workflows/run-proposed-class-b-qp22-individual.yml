@@ -1,0 +1,83 @@
+name: Run Proposed CD-SATM Class B - Individual QP22
+
+on:
+  workflow_dispatch:
+    inputs:
+      sequence:
+        description: Class-B sequence
+        required: true
+        default: B1_Kimono1
+        type: choice
+        options:
+          - B1_Kimono1
+          - B2_ParkScene
+          - B3_Cactus
+      frames:
+        description: Frames to encode
+        required: true
+        default: "32"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: ${{ inputs.sequence }} QP22
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build measured VTM encoder
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target EncoderApp --parallel 2
+          test -x bin/EncoderAppStatic
+      - name: Prepare selected 32-frame input
+        env:
+          SEQUENCE: ${{ inputs.sequence }}
+          FRAMES: ${{ inputs.frames }}
+        run: |
+          python3 -m pip install --disable-pip-version-check gdown
+          case "$SEQUENCE" in
+            B1_Kimono1)
+              file=B1_Kimono1_1920x1080_24.yuv
+              url=https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view
+              ;;
+            B2_ParkScene)
+              file=B2_ParkScene_1920x1080_24.yuv
+              url=https://drive.google.com/file/d/1T6bD9NgeOSTIHzulcB2LOcxKUBA_eJcg/view
+              ;;
+            B3_Cactus)
+              file=B3_Cactus_1920x1080_50.yuv
+              url=https://drive.google.com/file/d/19CIbt-C0yFxJAPZSx5JWQsFQ9Hhb13ao/view
+              ;;
+            *) echo "Unsupported sequence: $SEQUENCE" >&2; exit 2 ;;
+          esac
+          python3 scripts/prepare_class_b_input.py \
+            --url "$url" --output "Test_Sequences/$file" --frames "$FRAMES"
+      - name: Run individual Class-B QP22 job
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/bin/EncoderAppStatic
+        run: |
+          chmod +x bin/EncoderAppStatic scripts/run_proposed_class_b_qp22.sh
+          scripts/run_proposed_class_b_qp22.sh "${{ inputs.sequence }}" "${{ inputs.frames }}"
+      - name: Add result summary
+        if: always()
+        run: |
+          summary="results/Class_B/${{ inputs.sequence }}/QP22/${{ inputs.sequence }}_QP22_summary.txt"
+          if [[ -f "$summary" ]]; then
+            {
+              echo '```text'
+              sed -n '1,$p' "$summary"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload individual result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-${{ inputs.sequence }}-QP22-measured
+          path: results/Class_B/${{ inputs.sequence }}/QP22/
+          if-no-files-found: warn
+          retention-days: 30
