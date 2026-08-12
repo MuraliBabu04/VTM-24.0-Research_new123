@@ -46,6 +46,7 @@
 #include "dtrace_buffer.h"
 
 #include <stdlib.h>
+#include <cstring>
 #include <limits>
 #include <memory.h>
 
