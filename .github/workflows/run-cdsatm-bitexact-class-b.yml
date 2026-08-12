@@ -1,0 +1,149 @@
+name: Run CD-SATM Bit-Exact Class B - All QPs
+
+on:
+  workflow_dispatch:
+    inputs:
+      frames:
+        description: Frames per sequence/QP
+        required: true
+        default: "32"
+        type: string
+  push:
+    branches:
+      - agent/cdsatm-bitexact-vtm
+    paths:
+      - .github/workflows/run-cdsatm-bitexact-class-b.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cdsatm-bitexact-class-b-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare-input:
+    name: Prepare ${{ matrix.sequence }} input
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - sequence: B1_Kimono1
+            file: B1_Kimono1_1920x1080_24.yuv
+            url: https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view
+          - sequence: B2_ParkScene
+            file: B2_ParkScene_1920x1080_24.yuv
+            url: https://drive.google.com/file/d/1T6bD9NgeOSTIHzulcB2LOcxKUBA_eJcg/view
+          - sequence: B3_Cactus
+            file: B3_Cactus_1920x1080_50.yuv
+            url: https://drive.google.com/file/d/19CIbt-C0yFxJAPZSx5JWQsFQ9Hhb13ao/view
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and extract input
+        env:
+          SEQUENCE_URL: ${{ matrix.url }}
+          FILE: ${{ matrix.file }}
+          FRAMES: ${{ inputs.frames || '32' }}
+        run: |
+          python3 -m pip install --disable-pip-version-check gdown
+          python3 scripts/prepare_class_b_input.py \
+            --url "$SEQUENCE_URL" --output "Test_Sequences/$FILE" --frames "$FRAMES"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bitexact-input-${{ matrix.sequence }}-${{ inputs.frames || '32' }}f
+          path: Test_Sequences/${{ matrix.file }}
+          retention-days: 1
+          compression-level: 0
+
+  build-vtm:
+    name: Build integrated VTM encoder and decoder
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build EncoderApp and DecoderApp
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target EncoderApp DecoderApp --parallel 2
+          test -x bin/EncoderAppStatic
+          test -x bin/DecoderAppStatic
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bitexact-vtm-apps-class-b
+          path: |
+            bin/EncoderAppStatic
+            bin/DecoderAppStatic
+          retention-days: 1
+
+  verify:
+    name: ${{ matrix.sequence }} QP${{ matrix.qp }}
+    needs: [prepare-input, build-vtm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        sequence: [B1_Kimono1, B2_ParkScene, B3_Cactus]
+        qp: [22, 27, 32, 37]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bitexact-vtm-apps-class-b
+          path: integrated-vtm
+      - uses: actions/download-artifact@v4
+        with:
+          name: bitexact-input-${{ matrix.sequence }}-${{ inputs.frames || '32' }}f
+          path: Test_Sequences
+      - name: Run anchor and integrated CD-SATM verification
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/integrated-vtm/EncoderAppStatic
+          VTM_DECODER: ${{ github.workspace }}/integrated-vtm/DecoderAppStatic
+        run: |
+          chmod +x "$VTM_ENCODER" "$VTM_DECODER" scripts/run_cdsatm_bitexact_class_b.sh
+          scripts/run_cdsatm_bitexact_class_b.sh \
+            "${{ matrix.sequence }}" "${{ matrix.qp }}" "${{ inputs.frames || '32' }}"
+      - name: Add verification summary
+        if: always()
+        run: |
+          summary="results/BitExact_Class_B/${{ matrix.sequence }}/QP${{ matrix.qp }}/${{ matrix.sequence }}_QP${{ matrix.qp }}_summary.txt"
+          if [[ -f "$summary" ]]; then
+            {
+              echo '~~~text'
+              cat "$summary"
+              echo '~~~'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload sequence/QP verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bitexact-${{ matrix.sequence }}-QP${{ matrix.qp }}
+          path: results/BitExact_Class_B/${{ matrix.sequence }}/QP${{ matrix.qp }}/
+          if-no-files-found: error
+          retention-days: 30
+
+  bd-metrics:
+    name: Calculate Class-B BD-rate and BD-PSNR
+    needs: verify
+    if: always() && needs.verify.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bitexact-B*-QP*
+          path: collected
+      - name: Calculate four-point BD metrics
+        run: |
+          python3 scripts/calculate_cdsatm_bd.py \
+            --results collected --output results/Class_B_cdsatm_bd_metrics.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cdsatm-class-b-bd-metrics
+          path: results/Class_B_cdsatm_bd_metrics.csv
+          retention-days: 30
