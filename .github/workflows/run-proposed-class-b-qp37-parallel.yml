@@ -1,3 +1,4 @@
+YAML parsed
 name: Run Proposed CD-SATM Class B - Three QP37 in Parallel
 
 on:
@@ -8,6 +9,10 @@ on:
         required: true
         default: "64"
         type: string
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-proposed-class-b-qp37-parallel.yml
 
 permissions:
   contents: read
@@ -41,14 +46,14 @@ jobs:
         env:
           SEQUENCE_URL: ${{ matrix.url }}
           FILE: ${{ matrix.file }}
-          FRAMES: ${{ inputs.frames }}
+          FRAMES: ${{ inputs.frames || '64' }}
         run: |
           python3 -m pip install --disable-pip-version-check gdown
           python3 scripts/prepare_class_b_input.py \
             --url "$SEQUENCE_URL" --output "Test_Sequences/$FILE" --frames "$FRAMES"
       - uses: actions/upload-artifact@v4
         with:
-          name: class-b-${{ matrix.sequence }}-${{ inputs.frames }}f
+          name: class-b-${{ matrix.sequence }}-${{ inputs.frames || '64' }}f
           path: Test_Sequences/${{ matrix.file }}
           retention-days: 1
           compression-level: 0
@@ -88,14 +93,14 @@ jobs:
           path: instrumented-vtm
       - uses: actions/download-artifact@v4
         with:
-          name: class-b-${{ matrix.sequence }}-${{ inputs.frames }}f
+          name: class-b-${{ matrix.sequence }}-${{ inputs.frames || '64' }}f
           path: Test_Sequences
       - name: Run independent Class-B QP37 job
         env:
           VTM_ENCODER: ${{ github.workspace }}/instrumented-vtm/EncoderAppStatic
         run: |
           chmod +x "$VTM_ENCODER" scripts/run_proposed_class_b_qp37.sh
-          scripts/run_proposed_class_b_qp37.sh "${{ matrix.sequence }}" "${{ inputs.frames }}"
+          scripts/run_proposed_class_b_qp37.sh "${{ matrix.sequence }}" "${{ inputs.frames || '64' }}"
       - name: Add sequence summary
         if: always()
         run: |
