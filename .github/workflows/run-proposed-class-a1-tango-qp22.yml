@@ -1,0 +1,103 @@
+name: Run Proposed CD-SATM A1 Tango - QP22 Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      frames:
+        description: Frames for the QP22 run
+        required: true
+        default: "32"
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-proposed-class-a1-tango-qp22.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proposed-class-a1-tango-qp22-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-input:
+    name: Prepare A1 Tango input
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and extract exactly 32 4K 10-bit frames
+        env:
+          SEQUENCE_URL: https://drive.google.com/file/d/1UYRKYgN51OX1cpVHq-TCtJe-qo0YDuq1/view
+          FRAMES: ${{ inputs.frames || '32' }}
+        run: |
+          python3 -m pip install --disable-pip-version-check gdown
+          python3 scripts/prepare_class_a1_tango_input.py \
+            --url "$SEQUENCE_URL" \
+            --output Test_Sequences/Tango2_3840x2160_60fps_10bit_420.yuv \
+            --frames "$FRAMES"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: class-a1-tango-${{ inputs.frames || '32' }}f
+          path: Test_Sequences/Tango2_3840x2160_60fps_10bit_420.yuv
+          retention-days: 1
+          compression-level: 0
+
+  build-vtm:
+    name: Build measured VTM
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure and build EncoderApp
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target EncoderApp --parallel 2
+          test -x bin/EncoderAppStatic
+      - uses: actions/upload-artifact@v4
+        with:
+          name: measured-vtm-encoder-class-a1-qp22
+          path: bin/EncoderAppStatic
+          retention-days: 1
+
+  encode-qp22:
+    name: A1 Tango QP22
+    needs: [prepare-input, build-vtm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: measured-vtm-encoder-class-a1-qp22
+          path: instrumented-vtm
+      - uses: actions/download-artifact@v4
+        with:
+          name: class-a1-tango-${{ inputs.frames || '32' }}f
+          path: Test_Sequences
+      - name: Run A1 Tango QP22
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/instrumented-vtm/EncoderAppStatic
+        run: |
+          chmod +x "$VTM_ENCODER" scripts/run_proposed_class_a1_tango.sh
+          scripts/run_proposed_class_a1_tango.sh "22" "${{ inputs.frames || '32' }}"
+      - name: Add QP22 summary
+        if: always()
+        run: |
+          summary="results/Class_A1/A1_Tango/QP22/A1_Tango_QP22_summary.txt"
+          if [[ -f "$summary" ]]; then
+            {
+              echo '~~~text'
+              sed -n '1,$p' "$summary"
+              echo '~~~'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload QP22 result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-A1-Tango-QP22-measured
+          path: results/Class_A1/A1_Tango/QP22/
+          if-no-files-found: warn
+          retention-days: 30
