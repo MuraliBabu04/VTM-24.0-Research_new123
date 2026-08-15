@@ -1,0 +1,165 @@
+name: Run Proposed CD-SATM E3 KristenAndSara - Measured Sparsity
+
+on:
+  workflow_dispatch:
+    inputs:
+      frames:
+        description: Number of frames to encode for every QP
+        required: true
+        default: "64"
+        type: string
+      sequence_url:
+        description: KristenAndSara Y4M source URL
+        required: true
+        default: https://media.xiph.org/video/derf/y4m/KristenAndSara_1280x720_60.y4m
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-proposed-kristenandsara-measured.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proposed-kristenandsara-measured-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-input:
+    name: Prepare E3 KristenAndSara input
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Download and extract requested frames
+        env:
+          FRAMES: ${{ inputs.frames || '64' }}
+          SOURCE_URL: ${{ inputs.sequence_url || 'https://media.xiph.org/video/derf/y4m/KristenAndSara_1280x720_60.y4m' }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import urllib.request
+
+          frames = int(os.environ["FRAMES"])
+          width, height = 1280, 720
+          frame_bytes = width * height * 3 // 2
+          url = os.environ["SOURCE_URL"]
+          output = "E3_KristenAndSara_1280x720_60.yuv"
+
+          with urllib.request.urlopen(url, timeout=60) as source, open(output, "wb") as target:
+              header = source.readline()
+              if not header.startswith(b"YUV4MPEG2 "):
+                  raise SystemExit("Source is not a Y4M stream")
+              if b"W1280" not in header or b"H720" not in header:
+                  raise SystemExit(f"Unexpected Y4M dimensions: {header!r}")
+              for index in range(frames):
+                  marker = source.readline()
+                  if not marker.startswith(b"FRAME"):
+                      raise SystemExit(f"Missing Y4M frame marker at frame {index}")
+                  remaining = frame_bytes
+                  while remaining:
+                      chunk = source.read(min(1024 * 1024, remaining))
+                      if not chunk:
+                          raise SystemExit(f"Unexpected EOF at frame {index}")
+                      target.write(chunk)
+                      remaining -= len(chunk)
+
+          expected = frames * frame_bytes
+          actual = os.path.getsize(output)
+          if actual != expected:
+              raise SystemExit(f"YUV size mismatch: got {actual}, expected {expected}")
+          print(f"Prepared {frames} frames ({actual:,} bytes)")
+          PY
+
+      - name: Share input with all QP jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: kristenandsara-input-${{ inputs.frames || '64' }}f
+          path: E3_KristenAndSara_1280x720_60.yuv
+          retention-days: 1
+          compression-level: 0
+
+  build-vtm:
+    name: Build measured VTM
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure and build instrumented EncoderApp
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target EncoderApp --parallel 2
+          test -x bin/EncoderAppStatic
+
+      - name: Share measured VTM encoder
+        uses: actions/upload-artifact@v4
+        with:
+          name: measured-vtm-encoder-e3
+          path: bin/EncoderAppStatic
+          retention-days: 1
+          compression-level: 0
+
+  encode:
+    name: E3 KristenAndSara QP${{ matrix.qp }} measured
+    needs: [prepare-input, build-vtm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        qp: [22, 27, 32, 37]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download measured VTM encoder
+        uses: actions/download-artifact@v4
+        with:
+          name: measured-vtm-encoder-e3
+          path: instrumented-vtm
+
+      - name: Download E3 input
+        uses: actions/download-artifact@v4
+        with:
+          name: kristenandsara-input-${{ inputs.frames || '64' }}f
+          path: Test_Sequences
+
+      - name: Run independent measured QP job
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/instrumented-vtm/EncoderAppStatic
+          KRISTENANDSARA_YUV: ${{ github.workspace }}/Test_Sequences/E3_KristenAndSara_1280x720_60.yuv
+          RESULT_DIR: ${{ github.workspace }}/results/E3_KristenAndSara/QP${{ matrix.qp }}
+        run: |
+          set -euo pipefail
+          chmod +x "$VTM_ENCODER" run_proposed_E3_KristenAndSara_measured.sh
+          ./run_proposed_E3_KristenAndSara_measured.sh "${{ matrix.qp }}" "${{ inputs.frames || '64' }}"
+
+      - name: Add measured QP summary
+        if: always()
+        run: |
+          summary="results/E3_KristenAndSara/QP${{ matrix.qp }}/E3_KristenAndSara_QP${{ matrix.qp }}_summary.txt"
+          if [[ -f "$summary" ]]; then
+            {
+              echo '~~~text'
+              cat "$summary"
+              echo '~~~'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload measured QP result artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-E3-KristenAndSara-QP${{ matrix.qp }}-measured-${{ inputs.frames || '64' }}f
+          path: results/E3_KristenAndSara/QP${{ matrix.qp }}/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
