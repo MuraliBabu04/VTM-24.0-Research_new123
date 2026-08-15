@@ -1,0 +1,165 @@
+name: Run Proposed CD-SATM E3 KristenAndSara - All QPs in Parallel
+
+on:
+  workflow_dispatch:
+    inputs:
+      frames:
+        description: Number of frames for every QP
+        required: true
+        default: "64"
+        type: string
+      sequence_url:
+        description: Direct URL for KristenAndSara_1280x720_60.y4m
+        required: true
+        default: https://media.xiph.org/video/derf/y4m/KristenAndSara_1280x720_60.y4m
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-proposed-e3-all-qps-parallel.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proposed-e3-all-qps-parallel-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-input:
+    name: Prepare E3 KristenAndSara input
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Extract the requested YUV420 frames from Xiph Y4M
+        env:
+          SEQUENCE_URL: ${{ inputs.sequence_url || 'https://media.xiph.org/video/derf/y4m/KristenAndSara_1280x720_60.y4m' }}
+          FRAMES: ${{ inputs.frames || '64' }}
+        run: |
+          set -euo pipefail
+          mkdir -p test_sequence
+          python3 - <<'PY'
+          import os
+          import urllib.request
+
+          url = os.environ["SEQUENCE_URL"]
+          frames = int(os.environ["FRAMES"])
+          width, height = 1280, 720
+          frame_size = width * height * 3 // 2
+          output = "test_sequence/E3_KristenAndSara_1280x720_60.yuv"
+
+          def read_exact(stream, size):
+              chunks = []
+              remaining = size
+              while remaining:
+                  chunk = stream.read(remaining)
+                  if not chunk:
+                      raise EOFError(f"Y4M ended with {remaining} frame bytes missing")
+                  chunks.append(chunk)
+                  remaining -= len(chunk)
+              return b"".join(chunks)
+
+          with urllib.request.urlopen(url, timeout=60) as source, open(output, "wb") as target:
+              header = source.readline()
+              if not header.startswith(b"YUV4MPEG2"):
+                  raise ValueError("Input is not a Y4M stream")
+              if b"W1280" not in header or b"H720" not in header:
+                  raise ValueError(f"Unexpected Y4M dimensions: {header!r}")
+              for index in range(frames):
+                  marker = source.readline()
+                  if not marker.startswith(b"FRAME"):
+                      raise ValueError(f"Missing FRAME marker at frame {index}: {marker!r}")
+                  target.write(read_exact(source, frame_size))
+
+          print(f"Extracted {frames} frames to {output}")
+          PY
+
+          actual_size="$(stat -c%s test_sequence/E3_KristenAndSara_1280x720_60.yuv)"
+          expected_size="$((1280 * 720 * 3 / 2 * FRAMES))"
+          test "$actual_size" -eq "$expected_size"
+
+      - name: Share the input with all four QP jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: E3-KristenAndSara-${{ inputs.frames || '64' }}f-input
+          path: test_sequence/E3_KristenAndSara_1280x720_60.yuv
+          retention-days: 1
+          compression-level: 0
+
+  proposed:
+    name: Proposed E3 KristenAndSara QP${{ matrix.qp }}
+    needs: prepare-input
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        qp: ["22", "27", "32", "37"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download KristenAndSara input
+        uses: actions/download-artifact@v4
+        with:
+          name: E3-KristenAndSara-${{ inputs.frames || '64' }}f-input
+          path: test_sequence
+
+      - name: Verify Linux VTM and inputs
+        run: |
+          chmod +x bin/EncoderAppStatic scripts/*.sh
+          test -x bin/EncoderAppStatic
+          test -f cfg/per-sequence/KristenAndSara.cfg
+          test -f test_sequence/E3_KristenAndSara_1280x720_60.yuv
+          actual_size="$(stat -c%s test_sequence/E3_KristenAndSara_1280x720_60.yuv)"
+          expected_size="$((1280 * 720 * 3 / 2 * ${{ inputs.frames || '64' }}))"
+          test "$actual_size" -eq "$expected_size"
+
+      - name: Run proposed E3 QP${{ matrix.qp }}
+        env:
+          QP: ${{ matrix.qp }}
+          FRAMES: ${{ inputs.frames || '64' }}
+        run: |
+          set -euo pipefail
+          case "$QP" in
+            22)
+              scripts/run_proposed_E3_KristenAndSara_QP22.sh
+              ;;
+            27|32)
+              scripts/run_proposed_E3_KristenAndSara_QP27_QP32.sh "$QP"
+              ;;
+            37)
+              scripts/run_proposed_E3_KristenAndSara.sh "$QP"
+              ;;
+            *)
+              echo "Unsupported QP: $QP" >&2
+              exit 2
+              ;;
+          esac
+
+      - name: Add QP${{ matrix.qp }} summary
+        if: always()
+        env:
+          QP: ${{ matrix.qp }}
+        run: |
+          summary="results/proposed/E3_KristenAndSara/QP$QP/E3_KristenAndSara_QP${QP}_combined_summary.txt"
+          if [[ -f "$summary" ]]; then
+            {
+              echo '~~~text'
+              cat "$summary"
+              echo '~~~'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload proposed QP${{ matrix.qp }} result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-E3-KristenAndSara-QP${{ matrix.qp }}-64f
+          path: results/proposed/E3_KristenAndSara/QP${{ matrix.qp }}/
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: warn
