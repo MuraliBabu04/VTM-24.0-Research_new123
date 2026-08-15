@@ -1,0 +1,385 @@
+name: Run VTM Anchor Classes B-E - QP27 in Parallel
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-anchor-classes-bcde-qp27-parallel.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: anchor-classes-bcde-qp27-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-b:
+    name: Prepare ${{ matrix.sequence }} input
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - sequence: B1_Kimono1
+            file: B1_Kimono1_1920x1080_24.yuv
+            url: https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view
+          - sequence: B2_ParkScene
+            file: B2_ParkScene_1920x1080_24.yuv
+            url: https://drive.google.com/file/d/1T6bD9NgeOSTIHzulcB2LOcxKUBA_eJcg/view
+          - sequence: B3_Cactus
+            file: B3_Cactus_1920x1080_50.yuv
+            url: https://drive.google.com/file/d/19CIbt-C0yFxJAPZSx5JWQsFQ9Hhb13ao/view
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and extract 32 frames
+        env:
+          SEQUENCE_URL: ${{ matrix.url }}
+          FILE: ${{ matrix.file }}
+        run: |
+          python3 -m pip install --disable-pip-version-check gdown
+          python3 scripts/prepare_class_b_input.py \
+            --url "$SEQUENCE_URL" \
+            --output "Test_Sequences/$FILE" \
+            --frames 32
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anchor-input-${{ matrix.sequence }}-32f
+          path: Test_Sequences/${{ matrix.file }}
+          retention-days: 1
+          compression-level: 0
+
+  prepare-c:
+    name: Prepare ${{ matrix.sequence }} input
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - sequence: C1_RaceHorses
+            file: C1_RaceHorses_832x480_30.yuv
+            url: https://drive.google.com/file/d/1d8FMx_LEGCNSPlY5pu_o5x69Se9lZhkQ/view
+          - sequence: C2_BQMall
+            file: C2_BQMall_832x480_60.yuv
+            url: https://drive.google.com/file/d/1dEfl5qIhzokM-mZWVwpCESdefzh2pPji/view
+          - sequence: C3_PartyScene
+            file: C3_PartyScene_832x480_50.yuv
+            url: https://drive.google.com/file/d/1_l7Zr3edEHhFGulnYUvUM16hcNTOxz60/view
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and extract 96 frames
+        env:
+          SEQUENCE_URL: ${{ matrix.url }}
+          FILE: ${{ matrix.file }}
+        run: |
+          python3 -m pip install --disable-pip-version-check gdown
+          python3 scripts/prepare_class_c_input.py \
+            --url "$SEQUENCE_URL" \
+            --output "Test_Sequences/$FILE" \
+            --frames 96
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anchor-input-${{ matrix.sequence }}-96f
+          path: Test_Sequences/${{ matrix.file }}
+          retention-days: 1
+          compression-level: 0
+
+  prepare-d:
+    name: Prepare ${{ matrix.sequence }} input
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - sequence: D1_RaceHorses
+            file: D1_RaceHorses_416x240_30.yuv
+            sha256: 7192decb5ab38d0367afcce4c3ca77c6fc06b11d0d50de2c27eceda8ecd24951
+          - sequence: D2_BQSquare
+            file: D2_BQSquare_416x240_60.yuv
+            sha256: 2ea8a868496358ab11761fca9b524eb169b369fe933472650bc499262b31e374
+          - sequence: D3_BlowingBubbles
+            file: D3_BlowingBubbles_416x240_50.yuv
+            sha256: 34de0fb4fb637a53994cfc67db8b22d01fe9b54e207db20d25683e72789682d5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct supplied 64-frame YUV
+        env:
+          FILE: ${{ matrix.file }}
+          EXPECTED_SHA256: ${{ matrix.sha256 }}
+        run: |
+          mkdir -p Test_Sequences
+          for part in test_sequences/class_d/"${FILE}".gz.b64.part*.b64; do
+            base64 --decode "$part"
+          done | gzip -dc > "Test_Sequences/${FILE}"
+          test "$(stat -c%s "Test_Sequences/${FILE}")" -eq 9584640
+          echo "${EXPECTED_SHA256}  Test_Sequences/${FILE}" | sha256sum --check --strict
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anchor-input-${{ matrix.sequence }}-64f
+          path: Test_Sequences/${{ matrix.file }}
+          retention-days: 1
+          compression-level: 0
+
+  prepare-e:
+    name: Prepare ${{ matrix.sequence }} input
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - sequence: E1_FourPeople
+            file: E1_FourPeople_1280x720_60.yuv
+            url: https://media.xiph.org/video/derf/y4m/FourPeople_1280x720_60.y4m
+          - sequence: E2_Johnny
+            file: E2_Johnny_1280x720_60.yuv
+            url: https://media.xiph.org/video/derf/y4m/Johnny_1280x720_60.y4m
+          - sequence: E3_KristenAndSara
+            file: E3_KristenAndSara_1280x720_60.yuv
+            url: https://media.xiph.org/video/derf/y4m/KristenAndSara_1280x720_60.y4m
+    steps:
+      - name: Extract 64 frames from the Y4M source
+        env:
+          SEQUENCE_URL: ${{ matrix.url }}
+          FILE: ${{ matrix.file }}
+        run: |
+          mkdir -p Test_Sequences
+          python3 - <<'PY'
+          import os
+          import urllib.request
+
+          url = os.environ["SEQUENCE_URL"]
+          output = os.path.join("Test_Sequences", os.environ["FILE"])
+          frames = 64
+          width, height = 1280, 720
+          frame_size = width * height * 3 // 2
+
+          def read_exact(stream, size):
+              chunks = []
+              remaining = size
+              while remaining:
+                  chunk = stream.read(remaining)
+                  if not chunk:
+                      raise EOFError(f"Y4M ended with {remaining} frame bytes missing")
+                  chunks.append(chunk)
+                  remaining -= len(chunk)
+              return b"".join(chunks)
+
+          with urllib.request.urlopen(url, timeout=60) as source, open(output, "wb") as target:
+              header = source.readline()
+              if not header.startswith(b"YUV4MPEG2"):
+                  raise ValueError("Input is not a Y4M stream")
+              if b"W1280" not in header or b"H720" not in header:
+                  raise ValueError(f"Unexpected Y4M dimensions: {header!r}")
+              for index in range(frames):
+                  marker = source.readline()
+                  if not marker.startswith(b"FRAME"):
+                      raise ValueError(f"Missing FRAME marker at frame {index}: {marker!r}")
+                  target.write(read_exact(source, frame_size))
+
+          expected_size = frames * frame_size
+          actual_size = os.path.getsize(output)
+          if actual_size != expected_size:
+              raise ValueError(f"Unexpected YUV size: {actual_size}; expected {expected_size}")
+          print(f"Prepared {output}: {actual_size} bytes")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anchor-input-${{ matrix.sequence }}-64f
+          path: Test_Sequences/${{ matrix.file }}
+          retention-days: 1
+          compression-level: 0
+
+  build-vtm:
+    name: Build VTM anchor encoder
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure and build EncoderApp
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target EncoderApp --parallel 2
+          test -x bin/EncoderAppStatic
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anchor-vtm-encoder-bcde
+          path: bin/EncoderAppStatic
+          retention-days: 1
+          compression-level: 0
+
+  anchor-b:
+    name: Anchor ${{ matrix.sequence }} QP${{ matrix.qp }}
+    needs: [prepare-b, build-vtm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        sequence: [B1_Kimono1, B2_ParkScene, B3_Cactus]
+        qp: [27]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: anchor-vtm-encoder-bcde
+          path: instrumented-vtm
+      - uses: actions/download-artifact@v4
+        with:
+          name: anchor-input-${{ matrix.sequence }}-32f
+          path: Test_Sequences
+      - name: Run VTM anchor
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/instrumented-vtm/EncoderAppStatic
+        run: |
+          chmod +x "$VTM_ENCODER" scripts/run_anchor_ctc_sequence.sh
+          scripts/run_anchor_ctc_sequence.sh "${{ matrix.sequence }}" "${{ matrix.qp }}" 32
+      - name: Add anchor summary
+        if: always()
+        run: |
+          summary="results/Anchor/Class_B/${{ matrix.sequence }}/QP${{ matrix.qp }}/${{ matrix.sequence }}_QP${{ matrix.qp }}_anchor_summary.txt"
+          test ! -f "$summary" || cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload anchor result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-${{ matrix.sequence }}-QP${{ matrix.qp }}-32f
+          path: results/Anchor/Class_B/${{ matrix.sequence }}/QP${{ matrix.qp }}/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 0
+
+  anchor-c:
+    name: Anchor ${{ matrix.sequence }} QP${{ matrix.qp }}
+    needs: [prepare-c, build-vtm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        sequence: [C1_RaceHorses, C2_BQMall, C3_PartyScene]
+        qp: [27]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: anchor-vtm-encoder-bcde
+          path: instrumented-vtm
+      - uses: actions/download-artifact@v4
+        with:
+          name: anchor-input-${{ matrix.sequence }}-96f
+          path: Test_Sequences
+      - name: Run VTM anchor
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/instrumented-vtm/EncoderAppStatic
+        run: |
+          chmod +x "$VTM_ENCODER" scripts/run_anchor_ctc_sequence.sh
+          scripts/run_anchor_ctc_sequence.sh "${{ matrix.sequence }}" "${{ matrix.qp }}" 96
+      - name: Add anchor summary
+        if: always()
+        run: |
+          summary="results/Anchor/Class_C/${{ matrix.sequence }}/QP${{ matrix.qp }}/${{ matrix.sequence }}_QP${{ matrix.qp }}_anchor_summary.txt"
+          test ! -f "$summary" || cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload anchor result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-${{ matrix.sequence }}-QP${{ matrix.qp }}-96f
+          path: results/Anchor/Class_C/${{ matrix.sequence }}/QP${{ matrix.qp }}/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 0
+
+  anchor-d:
+    name: Anchor ${{ matrix.sequence }} QP${{ matrix.qp }}
+    needs: [prepare-d, build-vtm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        sequence: [D1_RaceHorses, D2_BQSquare, D3_BlowingBubbles]
+        qp: [27]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: anchor-vtm-encoder-bcde
+          path: instrumented-vtm
+      - uses: actions/download-artifact@v4
+        with:
+          name: anchor-input-${{ matrix.sequence }}-64f
+          path: Test_Sequences
+      - name: Run VTM anchor
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/instrumented-vtm/EncoderAppStatic
+        run: |
+          chmod +x "$VTM_ENCODER" scripts/run_anchor_ctc_sequence.sh
+          scripts/run_anchor_ctc_sequence.sh "${{ matrix.sequence }}" "${{ matrix.qp }}" 64
+      - name: Add anchor summary
+        if: always()
+        run: |
+          summary="results/Anchor/Class_D/${{ matrix.sequence }}/QP${{ matrix.qp }}/${{ matrix.sequence }}_QP${{ matrix.qp }}_anchor_summary.txt"
+          test ! -f "$summary" || cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload anchor result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-${{ matrix.sequence }}-QP${{ matrix.qp }}-64f
+          path: results/Anchor/Class_D/${{ matrix.sequence }}/QP${{ matrix.qp }}/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 0
+
+  anchor-e:
+    name: Anchor ${{ matrix.sequence }} QP${{ matrix.qp }}
+    needs: [prepare-e, build-vtm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        sequence: [E1_FourPeople, E2_Johnny, E3_KristenAndSara]
+        qp: [27]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: anchor-vtm-encoder-bcde
+          path: instrumented-vtm
+      - uses: actions/download-artifact@v4
+        with:
+          name: anchor-input-${{ matrix.sequence }}-64f
+          path: Test_Sequences
+      - name: Run VTM anchor
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/instrumented-vtm/EncoderAppStatic
+        run: |
+          chmod +x "$VTM_ENCODER" scripts/run_anchor_ctc_sequence.sh
+          scripts/run_anchor_ctc_sequence.sh "${{ matrix.sequence }}" "${{ matrix.qp }}" 64
+      - name: Add anchor summary
+        if: always()
+        run: |
+          summary="results/Anchor/Class_E/${{ matrix.sequence }}/QP${{ matrix.qp }}/${{ matrix.sequence }}_QP${{ matrix.qp }}_anchor_summary.txt"
+          test ! -f "$summary" || cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload anchor result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-${{ matrix.sequence }}-QP${{ matrix.qp }}-64f
+          path: results/Anchor/Class_E/${{ matrix.sequence }}/QP${{ matrix.qp }}/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 0
