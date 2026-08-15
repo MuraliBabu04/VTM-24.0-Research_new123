@@ -1,0 +1,134 @@
+name: Run VTM Anchor C1 C2 and C3 - QP22 in Parallel
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-anchor-c1-c2-c3-qp22-parallel.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: anchor-c1-c2-c3-qp22-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-input:
+    name: Prepare ${{ matrix.sequence }} input
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - sequence: C1_RaceHorses
+            file: C1_RaceHorses_832x480_30.yuv
+            url: https://drive.google.com/file/d/1d8FMx_LEGCNSPlY5pu_o5x69Se9lZhkQ/view
+          - sequence: C2_BQMall
+            file: C2_BQMall_832x480_60.yuv
+            url: https://drive.google.com/file/d/1dEfl5qIhzokM-mZWVwpCESdefzh2pPji/view
+          - sequence: C3_PartyScene
+            file: C3_PartyScene_832x480_50.yuv
+            url: https://drive.google.com/file/d/1_l7Zr3edEHhFGulnYUvUM16hcNTOxz60/view
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download and extract 96 frames
+        env:
+          SEQUENCE_URL: ${{ matrix.url }}
+          FILE: ${{ matrix.file }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check gdown
+          python3 scripts/prepare_class_c_input.py \
+            --url "$SEQUENCE_URL" \
+            --output "Test_Sequences/$FILE" \
+            --frames 96
+
+      - name: Share input
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-qp22-input-${{ matrix.sequence }}-96f
+          path: Test_Sequences/${{ matrix.file }}
+          retention-days: 1
+          compression-level: 0
+
+  build-vtm:
+    name: Build VTM anchor encoder
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure and build EncoderApp
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target EncoderApp --parallel 2
+          test -x bin/EncoderAppStatic
+
+      - name: Share VTM anchor encoder
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-vtm-encoder-c1-c2-c3-qp22
+          path: bin/EncoderAppStatic
+          retention-days: 1
+          compression-level: 0
+
+  anchor:
+    name: Anchor ${{ matrix.sequence }} QP22
+    needs: [prepare-input, build-vtm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        sequence: [C1_RaceHorses, C2_BQMall, C3_PartyScene]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download VTM anchor encoder
+        uses: actions/download-artifact@v4
+        with:
+          name: anchor-vtm-encoder-c1-c2-c3-qp22
+          path: instrumented-vtm
+
+      - name: Download sequence input
+        uses: actions/download-artifact@v4
+        with:
+          name: anchor-qp22-input-${{ matrix.sequence }}-96f
+          path: Test_Sequences
+
+      - name: Run VTM anchor QP22
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/instrumented-vtm/EncoderAppStatic
+        run: |
+          set -euo pipefail
+          chmod +x "$VTM_ENCODER" scripts/run_anchor_ctc_sequence.sh
+          scripts/run_anchor_ctc_sequence.sh "${{ matrix.sequence }}" 22 96
+
+      - name: Add anchor summary
+        if: always()
+        run: |
+          summary="results/Anchor/Class_C/${{ matrix.sequence }}/QP22/${{ matrix.sequence }}_QP22_anchor_summary.txt"
+          test ! -f "$summary" || cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload anchor result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-${{ matrix.sequence }}-QP22-96f
+          path: results/Anchor/Class_C/${{ matrix.sequence }}/QP22/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
