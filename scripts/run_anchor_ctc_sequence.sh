@@ -2,13 +2,13 @@
 # Standard VTM anchor runner for Classes B, C, D and E.
 set -euo pipefail
 
-SEQUENCE="${1:?Usage: $0 <sequence> <32|37> <frames>}"
-QP="${2:?Usage: $0 <sequence> <32|37> <frames>}"
-FRAMES="${3:?Usage: $0 <sequence> <32|37> <frames>}"
+SEQUENCE="${1:?Usage: $0 <sequence> <27|32|37> <frames>}"
+QP="${2:?Usage: $0 <sequence> <27|32|37> <frames>}"
+FRAMES="${3:?Usage: $0 <sequence> <27|32|37> <frames>}"
 
 case "$QP" in
-  32|37) ;;
-  *) echo "Unsupported anchor QP: $QP; expected 32 or 37." >&2; exit 2 ;;
+  27|32|37) ;;
+  *) echo "Unsupported anchor QP: $QP; expected 27, 32 or 37." >&2; exit 2 ;;
 esac
 
 case "$SEQUENCE" in
