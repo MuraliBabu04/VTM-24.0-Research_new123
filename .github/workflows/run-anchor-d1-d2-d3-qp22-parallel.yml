@@ -1,0 +1,135 @@
+name: Run VTM Anchor D1 D2 and D3 - QP22 in Parallel
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-anchor-d1-d2-d3-qp22-parallel.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: anchor-d1-d2-d3-qp22-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-input:
+    name: Prepare ${{ matrix.sequence }} input
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - sequence: D1_RaceHorses
+            file: D1_RaceHorses_416x240_30.yuv
+            sha256: 7192decb5ab38d0367afcce4c3ca77c6fc06b11d0d50de2c27eceda8ecd24951
+          - sequence: D2_BQSquare
+            file: D2_BQSquare_416x240_60.yuv
+            sha256: 2ea8a868496358ab11761fca9b524eb169b369fe933472650bc499262b31e374
+          - sequence: D3_BlowingBubbles
+            file: D3_BlowingBubbles_416x240_50.yuv
+            sha256: 34de0fb4fb637a53994cfc67db8b22d01fe9b54e207db20d25683e72789682d5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Reconstruct supplied 64-frame YUV
+        env:
+          FILE: ${{ matrix.file }}
+          EXPECTED_SHA256: ${{ matrix.sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p Test_Sequences
+          for part in test_sequences/class_d/"${FILE}".gz.b64.part*.b64; do
+            base64 --decode "$part"
+          done | gzip -dc > "Test_Sequences/${FILE}"
+          test "$(stat -c%s "Test_Sequences/${FILE}")" -eq 9584640
+          echo "${EXPECTED_SHA256}  Test_Sequences/${FILE}" | sha256sum --check --strict
+
+      - name: Share input
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-qp22-input-${{ matrix.sequence }}-64f
+          path: Test_Sequences/${{ matrix.file }}
+          retention-days: 1
+          compression-level: 0
+
+  build-vtm:
+    name: Build VTM anchor encoder
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure and build EncoderApp
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target EncoderApp --parallel 2
+          test -x bin/EncoderAppStatic
+
+      - name: Share VTM anchor encoder
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-vtm-encoder-d1-d2-d3-qp22
+          path: bin/EncoderAppStatic
+          retention-days: 1
+          compression-level: 0
+
+  anchor:
+    name: Anchor ${{ matrix.sequence }} QP22
+    needs: [prepare-input, build-vtm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        sequence: [D1_RaceHorses, D2_BQSquare, D3_BlowingBubbles]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download VTM anchor encoder
+        uses: actions/download-artifact@v4
+        with:
+          name: anchor-vtm-encoder-d1-d2-d3-qp22
+          path: instrumented-vtm
+
+      - name: Download sequence input
+        uses: actions/download-artifact@v4
+        with:
+          name: anchor-qp22-input-${{ matrix.sequence }}-64f
+          path: Test_Sequences
+
+      - name: Run VTM anchor QP22
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/instrumented-vtm/EncoderAppStatic
+        run: |
+          set -euo pipefail
+          chmod +x "$VTM_ENCODER" scripts/run_anchor_ctc_sequence.sh
+          scripts/run_anchor_ctc_sequence.sh "${{ matrix.sequence }}" 22 64
+
+      - name: Add anchor summary
+        if: always()
+        run: |
+          summary="results/Anchor/Class_D/${{ matrix.sequence }}/QP22/${{ matrix.sequence }}_QP22_anchor_summary.txt"
+          test ! -f "$summary" || cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload anchor result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-${{ matrix.sequence }}-QP22-64f
+          path: results/Anchor/Class_D/${{ matrix.sequence }}/QP22/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
