@@ -1,0 +1,126 @@
+name: Run VTM Anchor A1 Tango - QP27 QP32 and QP37 in Parallel
+
+on:
+  workflow_dispatch:
+    inputs:
+      frames:
+        description: Frames per QP run
+        required: true
+        default: "32"
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-anchor-a1-tango-qp27-qp32-qp37-parallel.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: anchor-a1-tango-qp27-qp32-qp37-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-input:
+    name: Prepare A1 Tango input
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download and extract 32 4K 10-bit frames
+        env:
+          SEQUENCE_URL: https://drive.google.com/file/d/1UYRKYgN51OX1cpVHq-TCtJe-qo0YDuq1/view
+          FRAMES: ${{ inputs.frames || '32' }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check gdown
+          python3 scripts/prepare_class_a1_tango_input.py \
+            --url "$SEQUENCE_URL" \
+            --output Test_Sequences/Tango2_3840x2160_60fps_10bit_420.yuv \
+            --frames "$FRAMES"
+
+      - name: Share Tango input
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-a1-tango-${{ inputs.frames || '32' }}f-input
+          path: Test_Sequences/Tango2_3840x2160_60fps_10bit_420.yuv
+          retention-days: 1
+          compression-level: 0
+
+  build-vtm:
+    name: Build VTM anchor encoder
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure and build EncoderApp
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target EncoderApp --parallel 2
+          test -x bin/EncoderAppStatic
+
+      - name: Share VTM anchor encoder
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-vtm-encoder-a1-tango
+          path: bin/EncoderAppStatic
+          retention-days: 1
+          compression-level: 0
+
+  anchor:
+    name: Anchor A1 Tango QP${{ matrix.qp }}
+    needs: [prepare-input, build-vtm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        qp: [27, 32, 37]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download VTM anchor encoder
+        uses: actions/download-artifact@v4
+        with:
+          name: anchor-vtm-encoder-a1-tango
+          path: instrumented-vtm
+
+      - name: Download Tango input
+        uses: actions/download-artifact@v4
+        with:
+          name: anchor-a1-tango-${{ inputs.frames || '32' }}f-input
+          path: Test_Sequences
+
+      - name: Run VTM anchor
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/instrumented-vtm/EncoderAppStatic
+        run: |
+          set -euo pipefail
+          chmod +x "$VTM_ENCODER" scripts/run_anchor_ctc_sequence.sh
+          scripts/run_anchor_ctc_sequence.sh A1_Tango "${{ matrix.qp }}" "${{ inputs.frames || '32' }}"
+
+      - name: Add anchor summary
+        if: always()
+        run: |
+          summary="results/Anchor/Class_A1/A1_Tango/QP${{ matrix.qp }}/A1_Tango_QP${{ matrix.qp }}_anchor_summary.txt"
+          test ! -f "$summary" || cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload anchor result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-A1-Tango-QP${{ matrix.qp }}-${{ inputs.frames || '32' }}f
+          path: results/Anchor/Class_A1/A1_Tango/QP${{ matrix.qp }}/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 0
