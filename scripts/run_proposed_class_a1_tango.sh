@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-QP="${1:?Usage: $0 <22|27|37> [frames]}"
+QP="${1:?Usage: $0 <22|27|32|37> [frames]}"
 FRAMES="${2:-32}"
 
 case "$QP" in
-  22|27|37) ;;
+  22|27|32|37) ;;
   *) echo "Unsupported A1 Tango QP: $QP" >&2; exit 2 ;;
 esac
 
@@ -47,7 +47,7 @@ python3 "$ANALYZER" \
   echo "LFNST: 1"
   echo
   echo "VTM bitrate / PSNR summary:"
-  grep -E '^(SUMMARY|a[[:space:]]|Total Time)' "$VTM_LOG" || true
+  grep -E 'SUMMARY|Total Frames|^[[:space:]]*[0-9]+[[:space:]]+a[[:space:]]|Total Time' "$VTM_LOG" || true
   echo
   echo "Measured CD-SATM hardware metrics:"
   sed -n '1,$p' "$CDSATM_LOG"
