@@ -12,6 +12,9 @@ case "$QP" in
 esac
 
 case "$SEQUENCE" in
+  A1_Tango)
+    CLASS="A1"; CFG_NAME="Tango2.cfg"; YUV_NAME="Tango2_3840x2160_60fps_10bit_420.yuv"
+    ;;
   B1_Kimono1)
     CLASS="B"; CFG_NAME="Kimono.cfg"; YUV_NAME="B1_Kimono1_1920x1080_24.yuv"
     ;;
