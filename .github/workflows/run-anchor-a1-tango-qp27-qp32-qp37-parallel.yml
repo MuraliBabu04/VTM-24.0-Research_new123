@@ -124,3 +124,5 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
           compression-level: 0
+
+# Triggered again to complete the Anchor QP27 QP32 and QP37 set.
