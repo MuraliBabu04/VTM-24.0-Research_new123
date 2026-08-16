@@ -1,0 +1,132 @@
+name: Run Proposed CD-SATM A1 Tango - Remaining QP22 and QP32 in Parallel
+
+on:
+  workflow_dispatch:
+    inputs:
+      frames:
+        description: Frames per QP run
+        required: true
+        default: "32"
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-proposed-class-a1-tango-remaining-qp22-qp32-parallel.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proposed-a1-tango-remaining-qp22-qp32-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-input:
+    name: Prepare A1 Tango input
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download and extract 32 4K 10-bit frames
+        env:
+          SEQUENCE_URL: https://drive.google.com/file/d/1UYRKYgN51OX1cpVHq-TCtJe-qo0YDuq1/view
+          FRAMES: ${{ inputs.frames || '32' }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check gdown
+          python3 scripts/prepare_class_a1_tango_input.py \
+            --url "$SEQUENCE_URL" \
+            --output Test_Sequences/Tango2_3840x2160_60fps_10bit_420.yuv \
+            --frames "$FRAMES"
+
+      - name: Share Tango input
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-a1-tango-${{ inputs.frames || '32' }}f-input
+          path: Test_Sequences/Tango2_3840x2160_60fps_10bit_420.yuv
+          retention-days: 1
+          compression-level: 0
+
+  build-vtm:
+    name: Build measured VTM
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure and build instrumented EncoderApp
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target EncoderApp --parallel 2
+          test -x bin/EncoderAppStatic
+
+      - name: Share measured VTM encoder
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-measured-vtm-encoder-a1-tango
+          path: bin/EncoderAppStatic
+          retention-days: 1
+          compression-level: 0
+
+  encode:
+    name: Proposed A1 Tango QP${{ matrix.qp }} measured
+    needs: [prepare-input, build-vtm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        qp: [22, 32]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download measured VTM encoder
+        uses: actions/download-artifact@v4
+        with:
+          name: proposed-measured-vtm-encoder-a1-tango
+          path: instrumented-vtm
+
+      - name: Download Tango input
+        uses: actions/download-artifact@v4
+        with:
+          name: proposed-a1-tango-${{ inputs.frames || '32' }}f-input
+          path: Test_Sequences
+
+      - name: Run proposed measured Tango
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/instrumented-vtm/EncoderAppStatic
+        run: |
+          set -euo pipefail
+          chmod +x "$VTM_ENCODER" scripts/run_proposed_class_a1_tango.sh
+          scripts/run_proposed_class_a1_tango.sh "${{ matrix.qp }}" "${{ inputs.frames || '32' }}"
+
+      - name: Add measured summary
+        if: always()
+        run: |
+          summary="results/Class_A1/A1_Tango/QP${{ matrix.qp }}/A1_Tango_QP${{ matrix.qp }}_summary.txt"
+          if [[ -f "$summary" ]]; then
+            {
+              echo '~~~text'
+              cat "$summary"
+              echo '~~~'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload proposed measured result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-A1-Tango-QP${{ matrix.qp }}-measured-${{ inputs.frames || '32' }}f
+          path: results/Class_A1/A1_Tango/QP${{ matrix.qp }}/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 0
