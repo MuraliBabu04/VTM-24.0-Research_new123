@@ -101,3 +101,5 @@ jobs:
           path: results/Class_A1/A1_Tango/QP22/
           if-no-files-found: warn
           retention-days: 30
+
+# Triggered to regenerate the measured Tango QP22 sparsity CSV for manuscript validation.
