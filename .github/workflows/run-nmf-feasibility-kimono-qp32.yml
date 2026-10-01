@@ -12,6 +12,12 @@ on:
     branches: [nmf-vtm-lfnst0]
     paths:
       - .github/workflows/run-nmf-feasibility-kimono-qp32.yml
+      - source/Lib/CommonLib/TrQuant.cpp
+      - source/Lib/CommonLib/TrQuant_EMT.cpp
+      - source/Lib/CommonLib/TrQuant_EMT.h
+      - source/Lib/CommonLib/NmfMtsFactors.h
+      - nmf_experiment/**
+      - nmf_results/selected_factors.json
 
 permissions:
   contents: read
