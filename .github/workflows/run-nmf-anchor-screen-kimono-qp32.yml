@@ -1,0 +1,77 @@
+name: NMF Anchor Screen - Kimono1 - QP32 - LFNST0
+
+on:
+  workflow_dispatch:
+    inputs:
+      sequence_url:
+        description: Google Drive URL for B1_Kimono1_1920x1080_24.yuv
+        required: false
+        default: https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view?usp=drive_link
+        type: string
+  push:
+    branches: [nmf-vtm-lfnst0]
+    paths:
+      - .github/workflows/run-nmf-anchor-screen-kimono-qp32.yml
+
+permissions:
+  contents: read
+
+jobs:
+  anchor-screen:
+    name: Run matching VTM anchor at QP32
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout NMF branch
+        uses: actions/checkout@v4
+
+      - name: Download and verify Kimono1
+        env:
+          SEQUENCE_URL: ${{ inputs.sequence_url || 'https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view?usp=drive_link' }}
+        shell: bash
+        run: |
+          python3 -m pip install --disable-pip-version-check gdown
+          mkdir -p test_sequence
+          gdown "$SEQUENCE_URL" -O test_sequence/B1_Kimono1_1920x1080_24.yuv
+          test "$(stat -c%s test_sequence/B1_Kimono1_1920x1080_24.yuv)" -eq 746496000
+
+      - name: Run four-frame QP32 anchor
+        shell: bash
+        run: |
+          chmod +x bin/EncoderAppStatic
+          out="nmf_results/anchor_screen/B1_Kimono1/QP32"
+          mkdir -p "$out"
+          ./bin/EncoderAppStatic \
+            -c cfg/encoder_randomaccess_vtm.cfg \
+            -i test_sequence/B1_Kimono1_1920x1080_24.yuv \
+            -wdt 1920 -hgt 1080 -fr 24 \
+            --InputBitDepth=8 --InputChromaFormat=420 \
+            -f 4 -q 32 \
+            --MTS=1 --LFNST=0 \
+            -b "$out/B1_Kimono1_QP32_anchor_lfnst0_4f.vvc" \
+            2>&1 | tee "$out/B1_Kimono1_QP32_anchor_lfnst0_4f.log"
+
+          {
+            echo "Experiment: matching unmodified VTM anchor screening"
+            echo "Sequence: B1_Kimono1"
+            echo "Frames: 4"
+            echo "QP: 32"
+            echo "RandomAccess: 1"
+            echo "MTS: 1"
+            echo "LFNST: 0"
+            echo "CD-SATM/CSSATM: not invoked"
+            echo
+            grep -E 'SUMMARY|Total Frames|^[[:space:]]*[0-9]+[[:space:]]+a[[:space:]]|Total Time' \
+              "$out/B1_Kimono1_QP32_anchor_lfnst0_4f.log" || true
+          } | tee "$out/B1_Kimono1_QP32_anchor_lfnst0_4f_summary.txt"
+
+      - name: Upload screening anchor
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmf-anchor-screen-B1-Kimono1-QP32-LFNST0-4F
+          path: |
+            nmf_results/anchor_screen/B1_Kimono1/QP32/*.log
+            nmf_results/anchor_screen/B1_Kimono1/QP32/*.txt
+          if-no-files-found: warn
+          retention-days: 30
