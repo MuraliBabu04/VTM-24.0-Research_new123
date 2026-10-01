@@ -38,6 +38,7 @@
 #include "TrQuant_EMT.h"
 
 #include "Rom.h"
+#include "NmfMtsFactors.h"
 
 #include <stdlib.h>
 #include <math.h>
@@ -253,6 +254,93 @@ inline void forwardMatrixMult(const TCoeff *src, TCoeff *dst, int shift, size_t 
   {
     std::fill_n(dst + cutoff * numInLines, skipOutLines * numInLines, 0);
   }
+}
+
+// Fixed-point positive/negative NMF used only by the screening experiment.
+// Each factor carries NMF_FACTOR_FRACTIONAL_BITS fractional bits, so the
+// normal transform shift is increased by twice that amount after W*(H*x).
+template<size_t TR_SIZE, size_t RANK>
+inline void forwardNmfMatrixMult(const TCoeff *src, TCoeff *dst, int shift, size_t numInLines, int skipInLines,
+                                 int skipOutLines, const int32_t (&posW)[TR_SIZE][RANK],
+                                 const int32_t (&posH)[RANK][TR_SIZE], const int32_t (&negW)[TR_SIZE][RANK],
+                                 const int32_t (&negH)[RANK][TR_SIZE])
+{
+  const int totalShift = shift + 2 * NMF_FACTOR_FRACTIONAL_BITS;
+  const int64_t rndFactor = int64_t(1) << (totalShift - 1);
+  const size_t reducedLine = numInLines - skipInLines;
+  const size_t cutoff = TR_SIZE - skipOutLines;
+
+  for (size_t i = 0; i < reducedLine; i++)
+  {
+    int64_t posIntermediate[RANK] = {};
+    int64_t negIntermediate[RANK] = {};
+    for (size_t r = 0; r < RANK; r++)
+    {
+      for (size_t k = 0; k < TR_SIZE; k++)
+      {
+        posIntermediate[r] += int64_t(posH[r][k]) * src[i * TR_SIZE + k];
+        negIntermediate[r] += int64_t(negH[r][k]) * src[i * TR_SIZE + k];
+      }
+    }
+    for (size_t j = 0; j < cutoff; j++)
+    {
+      int64_t sum = 0;
+      for (size_t r = 0; r < RANK; r++)
+      {
+        sum += int64_t(posW[j][r]) * posIntermediate[r];
+        sum -= int64_t(negW[j][r]) * negIntermediate[r];
+      }
+      dst[j * numInLines + i] = TCoeff((sum + rndFactor) >> totalShift);
+    }
+  }
+
+  for (size_t j = 0; j < cutoff; j++)
+  {
+    if (skipInLines > 0)
+    {
+      std::fill_n(dst + j * numInLines + reducedLine, skipInLines, 0);
+    }
+  }
+  if (skipOutLines > 0)
+  {
+    std::fill_n(dst + cutoff * numInLines, skipOutLines * numInLines, 0);
+  }
+}
+
+void nmfForwardDST7_B8(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
+{
+  forwardNmfMatrixMult<8, 1>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDST7P8PosW, g_nmfDST7P8PosH,
+                             g_nmfDST7P8NegW, g_nmfDST7P8NegH);
+}
+
+void nmfForwardDST7_B16(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
+{
+  forwardNmfMatrixMult<16, 3>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDST7P16PosW, g_nmfDST7P16PosH,
+                              g_nmfDST7P16NegW, g_nmfDST7P16NegH);
+}
+
+void nmfForwardDST7_B32(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
+{
+  forwardNmfMatrixMult<32, 6>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDST7P32PosW, g_nmfDST7P32PosH,
+                              g_nmfDST7P32NegW, g_nmfDST7P32NegH);
+}
+
+void nmfForwardDCT8_B8(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
+{
+  forwardNmfMatrixMult<8, 1>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDCT8P8PosW, g_nmfDCT8P8PosH,
+                             g_nmfDCT8P8NegW, g_nmfDCT8P8NegH);
+}
+
+void nmfForwardDCT8_B16(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
+{
+  forwardNmfMatrixMult<16, 3>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDCT8P16PosW, g_nmfDCT8P16PosH,
+                              g_nmfDCT8P16NegW, g_nmfDCT8P16NegH);
+}
+
+void nmfForwardDCT8_B32(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
+{
+  forwardNmfMatrixMult<32, 6>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDCT8P32PosW, g_nmfDCT8P32PosH,
+                              g_nmfDCT8P32NegW, g_nmfDCT8P32NegH);
 }
 
 /** 8x8 forward transform implemented using partial butterfly structure (1D)
@@ -1625,4 +1713,3 @@ void fastInverseDCT8_B32(const TCoeff *src, TCoeff *dst, int shift, int line, in
                         g_trCoreDCT8P32[TRANSFORM_INVERSE][0]);
 #endif
 }
-

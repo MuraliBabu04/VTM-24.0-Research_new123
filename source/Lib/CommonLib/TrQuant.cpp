@@ -266,6 +266,16 @@ void TrQuant::init( const Quant* otherQuant,
 #ifdef TARGET_SIMD_X86
   initX86();
 #endif
+
+  // NMF feasibility branch: override SIMD/standard forward MTS for sizes where
+  // the selected factorization provides a positive multiplication reduction.
+  // Four-point MTS and every inverse transform intentionally remain normative.
+  m_fwdTx[TransType::DCT8][2] = nmfForwardDCT8_B8;
+  m_fwdTx[TransType::DCT8][3] = nmfForwardDCT8_B16;
+  m_fwdTx[TransType::DCT8][4] = nmfForwardDCT8_B32;
+  m_fwdTx[TransType::DST7][2] = nmfForwardDST7_B8;
+  m_fwdTx[TransType::DST7][3] = nmfForwardDST7_B16;
+  m_fwdTx[TransType::DST7][4] = nmfForwardDST7_B32;
 }
 
 void TrQuant::fwdLfnstNxN( TCoeff* src, TCoeff* dst, const uint32_t mode, const uint32_t index, const uint32_t size, int zeroOutSize )

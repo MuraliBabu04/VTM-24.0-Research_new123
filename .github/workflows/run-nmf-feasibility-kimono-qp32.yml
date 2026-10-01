@@ -1,0 +1,106 @@
+name: NMF MTS Feasibility - Kimono1 - QP32 - LFNST0
+
+on:
+  workflow_dispatch:
+    inputs:
+      sequence_url:
+        description: Google Drive URL for B1_Kimono1_1920x1080_24.yuv
+        required: false
+        default: https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view?usp=drive_link
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nmf-feasibility-kimono-qp32-lfnst0-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  proposed-screen:
+    name: Build and screen NMF MTS at QP32
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Checkout NMF branch
+        uses: actions/checkout@v4
+
+      - name: Verify isolated NMF implementation
+        shell: bash
+        run: |
+          test -f nmf_experiment/README.md
+          test -f nmf_results/selected_factors.json
+          test -f source/Lib/CommonLib/NmfMtsFactors.h
+          grep -q 'nmfForwardDCT8_B32' source/Lib/CommonLib/TrQuant.cpp
+          grep -q 'forwardNmfMatrixMult' source/Lib/CommonLib/TrQuant_EMT.cpp
+          ! grep -Ei 'cd[-_]?satm|cssatm' source/Lib/CommonLib/NmfMtsFactors.h \
+            source/Lib/CommonLib/TrQuant.cpp source/Lib/CommonLib/TrQuant_EMT.cpp
+
+      - name: Build modified VTM encoder
+        shell: bash
+        run: |
+          cmake -S . -B build-nmf -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-nmf --target EncoderApp --parallel "$(nproc)"
+          test -x bin/EncoderAppStatic
+
+      - name: Download and verify Kimono1
+        env:
+          SEQUENCE_URL: ${{ inputs.sequence_url || 'https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view?usp=drive_link' }}
+        shell: bash
+        run: |
+          python3 -m pip install --disable-pip-version-check gdown
+          mkdir -p test_sequence
+          gdown "$SEQUENCE_URL" -O test_sequence/B1_Kimono1_1920x1080_24.yuv
+          actual_size="$(stat -c%s test_sequence/B1_Kimono1_1920x1080_24.yuv)"
+          test "$actual_size" -eq 746496000 || {
+            echo "Unexpected Kimono1 size: $actual_size; expected 746496000 bytes." >&2
+            exit 1
+          }
+
+      - name: Run four-frame QP32 feasibility encode
+        shell: bash
+        run: |
+          out="nmf_results/proposed_screen/B1_Kimono1/QP32"
+          mkdir -p "$out"
+          ./bin/EncoderAppStatic \
+            -c cfg/encoder_randomaccess_vtm.cfg \
+            -i test_sequence/B1_Kimono1_1920x1080_24.yuv \
+            -wdt 1920 -hgt 1080 -fr 24 \
+            --InputBitDepth=8 --InputChromaFormat=420 \
+            -f 4 -q 32 \
+            --MTS=1 --LFNST=0 \
+            -b "$out/B1_Kimono1_QP32_nmf_lfnst0_4f.vvc" \
+            2>&1 | tee "$out/B1_Kimono1_QP32_nmf_lfnst0_4f.log"
+
+          sha256sum "$out/B1_Kimono1_QP32_nmf_lfnst0_4f.vvc" \
+            > "$out/B1_Kimono1_QP32_nmf_lfnst0_4f.sha256"
+          {
+            echo "Experiment: NMF MTS proposed screening"
+            echo "Sequence: B1_Kimono1"
+            echo "Frames: 4 (screening only; not final comparison)"
+            echo "QP: 32"
+            echo "RandomAccess: 1"
+            echo "MTS: 1"
+            echo "LFNST: 0"
+            echo "NMF ranks: size8=1, size16=3, size32=6; size4=normative"
+            echo "Factor fractional bits: 8"
+            echo "Inverse transform: normative VTM"
+            echo "CD-SATM/CSSATM: not invoked"
+            echo
+            grep -E 'SUMMARY|Total Frames|^[[:space:]]*[0-9]+[[:space:]]+a[[:space:]]|Total Time' \
+              "$out/B1_Kimono1_QP32_nmf_lfnst0_4f.log" || true
+          } | tee "$out/B1_Kimono1_QP32_nmf_lfnst0_4f_summary.txt"
+
+      - name: Upload screening result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmf-proposed-screen-B1-Kimono1-QP32-LFNST0-4F
+          path: |
+            nmf_results/proposed_screen/B1_Kimono1/QP32/*.log
+            nmf_results/proposed_screen/B1_Kimono1/QP32/*.txt
+            nmf_results/proposed_screen/B1_Kimono1/QP32/*.sha256
+            nmf_results/selected_factors.json
+            nmf_results/rank_sweep/*
+          if-no-files-found: warn
+          retention-days: 30
