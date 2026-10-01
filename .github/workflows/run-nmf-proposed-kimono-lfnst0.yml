@@ -1,0 +1,190 @@
+name: NMF Proposed - Kimono1 - LFNST0 - 32 Frames
+
+on:
+  workflow_dispatch:
+    inputs:
+      sequence_url:
+        description: Google Drive URL for B1_Kimono1_1920x1080_24.yuv
+        required: false
+        default: https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view?usp=drive_link
+        type: string
+  push:
+    branches: [nmf-vtm-lfnst0]
+    paths:
+      - .github/workflows/run-nmf-proposed-kimono-lfnst0.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nmf-proposed-kimono-lfnst0-32f-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Build NMF encoder and prepare Kimono1
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout NMF branch
+        uses: actions/checkout@v4
+
+      - name: Verify isolated fixed-point NMF source
+        shell: bash
+        run: |
+          test -f source/Lib/CommonLib/NmfMtsFactors.h
+          grep -q 'forwardNmfMatrixMult' source/Lib/CommonLib/TrQuant_EMT.cpp
+          grep -q 'nmfForwardDCT8_B32' source/Lib/CommonLib/TrQuant.cpp
+          ! grep -Ei 'cd[-_]?satm|cssatm' source/Lib/CommonLib/NmfMtsFactors.h \
+            source/Lib/CommonLib/TrQuant.cpp source/Lib/CommonLib/TrQuant_EMT.cpp
+
+      - name: Build modified VTM encoder once
+        shell: bash
+        run: |
+          cmake -S . -B build-nmf -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-nmf --target EncoderApp --parallel "$(nproc)"
+          test -x bin/EncoderAppStatic
+          mkdir -p prepared
+          cp bin/EncoderAppStatic prepared/EncoderAppNmf
+
+      - name: Download and verify Kimono1 once
+        env:
+          SEQUENCE_URL: ${{ inputs.sequence_url || 'https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view?usp=drive_link' }}
+        shell: bash
+        run: |
+          python3 -m pip install --disable-pip-version-check gdown
+          mkdir -p test_sequence
+          gdown "$SEQUENCE_URL" -O test_sequence/B1_Kimono1_1920x1080_24.yuv
+          test "$(stat -c%s test_sequence/B1_Kimono1_1920x1080_24.yuv)" -eq 746496000
+
+      - name: Upload prepared NMF encoder
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmf-proposed-encoder
+          path: prepared/EncoderAppNmf
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload Kimono1 input
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmf-proposed-B1-Kimono1-input
+          path: test_sequence/B1_Kimono1_1920x1080_24.yuv
+          retention-days: 1
+          compression-level: 0
+
+  proposed:
+    name: NMF Proposed QP ${{ matrix.qp }} - LFNST0 - 32 Frames
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        qp: [22, 27, 32, 37]
+    steps:
+      - name: Checkout NMF branch
+        uses: actions/checkout@v4
+
+      - name: Download prepared NMF encoder
+        uses: actions/download-artifact@v4
+        with:
+          name: nmf-proposed-encoder
+          path: prepared
+
+      - name: Download Kimono1 input
+        uses: actions/download-artifact@v4
+        with:
+          name: nmf-proposed-B1-Kimono1-input
+          path: test_sequence
+
+      - name: Run fixed-point NMF VTM
+        shell: bash
+        run: |
+          chmod +x prepared/EncoderAppNmf
+          qp="${{ matrix.qp }}"
+          out="nmf_results/proposed/B1_Kimono1/QP$qp"
+          mkdir -p "$out"
+          prepared/EncoderAppNmf \
+            -c cfg/encoder_randomaccess_vtm.cfg \
+            -i test_sequence/B1_Kimono1_1920x1080_24.yuv \
+            -wdt 1920 -hgt 1080 -fr 24 \
+            --InputBitDepth=8 --InputChromaFormat=420 \
+            -f 32 -q "$qp" \
+            --MTS=1 --LFNST=0 \
+            -b "$out/B1_Kimono1_QP${qp}_nmf_lfnst0.vvc" \
+            2>&1 | tee "$out/B1_Kimono1_QP${qp}_nmf_lfnst0.log"
+
+          sha256sum "$out/B1_Kimono1_QP${qp}_nmf_lfnst0.vvc" \
+            > "$out/B1_Kimono1_QP${qp}_nmf_lfnst0.sha256"
+          {
+            echo "Experiment: independent fixed-point NMF MTS proposed"
+            echo "Sequence: B1_Kimono1"
+            echo "Frames: 32"
+            echo "GOPSize: 32"
+            echo "QP: $qp"
+            echo "RandomAccess: 1"
+            echo "MTS: 1"
+            echo "LFNST: 0"
+            echo "NMF ranks: size8=1, size16=3, size32=6; size4=normative"
+            echo "Factor fractional bits: 8"
+            echo "Inverse transform: normative VTM"
+            echo "CD-SATM/CSSATM: not invoked"
+            echo
+            grep -E 'SUMMARY|Total Frames|^[[:space:]]*[0-9]+[[:space:]]+a[[:space:]]|Total Time' \
+              "$out/B1_Kimono1_QP${qp}_nmf_lfnst0.log" || true
+          } | tee "$out/B1_Kimono1_QP${qp}_nmf_lfnst0_summary.txt"
+
+      - name: Upload QP result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmf-proposed-B1-Kimono1-QP${{ matrix.qp }}-LFNST0-32F
+          path: |
+            nmf_results/proposed/B1_Kimono1/QP${{ matrix.qp }}/*.log
+            nmf_results/proposed/B1_Kimono1/QP${{ matrix.qp }}/*.txt
+            nmf_results/proposed/B1_Kimono1/QP${{ matrix.qp }}/*.sha256
+          if-no-files-found: warn
+          retention-days: 30
+
+  aggregate:
+    name: Collect proposed summaries
+    if: always()
+    needs: proposed
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download completed results
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nmf-proposed-B1-Kimono1-QP*-LFNST0-32F
+          path: summaries
+          merge-multiple: true
+
+      - name: Build combined summary
+        shell: bash
+        run: |
+          {
+            echo "Independent Fixed-Point NMF MTS - Proposed"
+            echo "Sequence: B1_Kimono1"
+            echo "Frames: 32 (one configured GOP)"
+            echo "QPs: 22, 27, 32, 37"
+            echo "Random Access; MTS=1; LFNST=0"
+            echo "No CD-SATM/CSSATM result is used."
+            echo
+            find summaries -type f -name '*_summary.txt' -print0 2>/dev/null |
+              sort -z |
+              while IFS= read -r -d '' summary; do
+                echo "===== $summary ====="
+                cat "$summary"
+                echo
+              done
+          } | tee nmf_proposed_lfnst0_32f_combined_summary.txt
+
+      - name: Upload combined summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmf-proposed-B1-Kimono1-LFNST0-32F-combined
+          path: nmf_proposed_lfnst0_32f_combined_summary.txt
+          retention-days: 30
