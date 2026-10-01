@@ -8,6 +8,10 @@ on:
         required: false
         default: https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view?usp=drive_link
         type: string
+  push:
+    branches: [nmf-vtm-lfnst0]
+    paths:
+      - .github/workflows/run-nmf-feasibility-kimono-qp32.yml
 
 permissions:
   contents: read
