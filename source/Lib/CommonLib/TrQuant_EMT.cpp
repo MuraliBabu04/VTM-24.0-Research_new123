@@ -256,16 +256,22 @@ inline void forwardMatrixMult(const TCoeff *src, TCoeff *dst, int shift, size_t 
   }
 }
 
-// Fixed-point positive/negative NMF used only by the screening experiment.
-// Each factor carries NMF_FACTOR_FRACTIONAL_BITS fractional bits, so the
-// normal transform shift is increased by twice that amount after W*(H*x).
+// Fixed-point positive/negative NMF used by the encoder-side MTS experiment.
+// The stored factors approximate VTM's low-precision MTS basis. VTM's forward
+// transform matrix has an additional 2^NMF_FORWARD_MATRIX_SCALE_BITS scale, so
+// remove both factor scales and restore that forward scale before applying the
+// normative transform shift.
 template<size_t TR_SIZE, size_t RANK>
 inline void forwardNmfMatrixMult(const TCoeff *src, TCoeff *dst, int shift, size_t numInLines, int skipInLines,
                                  int skipOutLines, const int32_t (&posW)[TR_SIZE][RANK],
                                  const int32_t (&posH)[RANK][TR_SIZE], const int32_t (&negW)[TR_SIZE][RANK],
                                  const int32_t (&negH)[RANK][TR_SIZE])
 {
-  const int totalShift = shift + 2 * NMF_FACTOR_FRACTIONAL_BITS;
+  static_assert(2 * NMF_FACTOR_FRACTIONAL_BITS >= NMF_FORWARD_MATRIX_SCALE_BITS,
+                "NMF fixed-point scale must cover the VTM forward-matrix scale");
+  const int totalShift =
+    shift + 2 * NMF_FACTOR_FRACTIONAL_BITS - NMF_FORWARD_MATRIX_SCALE_BITS;
+  assert(totalShift > 0);
   const int64_t rndFactor = int64_t(1) << (totalShift - 1);
   const size_t reducedLine = numInLines - skipInLines;
   const size_t cutoff = TR_SIZE - skipOutLines;
