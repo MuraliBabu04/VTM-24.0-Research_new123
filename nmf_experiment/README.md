@@ -8,7 +8,8 @@ kernels. It is independent of the repository's CD-SATM/CSSATM experiments.
 
 - VTM 24.0 Random Access, B1 Kimono1, 1920x1080 at 24 Hz
 - MTS enabled and LFNST disabled (`MTS=1`, `LFNST=0`)
-- QPs 22, 27, 32, and 37 for the final 32-frame comparison
+- QPs 22, 27, 32, and 37 for the completed baseline comparison
+- QPs 32 and 37 for the scale-calibration verification runs
 - A short QP32/4-frame screening encode before the full proposed runs
 - Normative VTM inverse transforms, so the encoder output remains decodable by
   an unmodified VTM decoder
@@ -24,11 +25,17 @@ a positive multiplication saving.
 `generate_selected_factors.py` generates `NmfMtsFactors.h` using 8 fractional
 bits and deterministic seeds. `TrQuant_EMT.cpp` evaluates the factors as two
 fixed-point stages, `H*x` followed by `W*(H*x)`, independently for the positive
-and negative parts. `TrQuant.cpp` routes only the forward 8/16/32-point
+and negative parts. The factors model the low-precision MTS basis, while VTM's
+forward kernels carry an additional 8-bit scale. The calibrated path therefore
+uses `shift + 2 * factor_fractional_bits - 8`; the original feasibility path
+omitted the final `- 8`, shrinking its NMF coefficients by about 256 times.
+`TrQuant.cpp` routes only the forward 8/16/32-point
 DCT-VIII and DST-VII paths to these functions after SIMD initialization.
 
 The selected low ranks reduce the dense multiplication count by 50% for size
-8 and 25% for sizes 16 and 32. They also have very large approximation error
+8 and 25% for sizes 16 and 32. The scale correction changes no ranks and adds
+no multiplications; it only aligns coefficient magnitude with VTM's normative
+forward-transform convention. They also have very large approximation error
 (about 81--89% relative Frobenius error), so the short encode is a screening
 test, not evidence of coding benefit.
 
@@ -43,3 +50,11 @@ cmake --build build --target EncoderApp --parallel "$(nproc)"
 
 Generated numerical records are stored under `nmf_results/`. No CD-SATM or
 CSSATM log, bitstream, or proposed result is used by this experiment.
+
+## Scale-calibration verification
+
+The `nmf-scale-calibrated-qp32-37` branch isolates the scale correction and
+runs Kimono1 for 32 frames at QP32 and QP37 with `MTS=1` and `LFNST=0`.
+This two-point check is an ablation, not a replacement for the four-QP BD-rate
+experiment. If it improves both verification points, the next experiment is a
+complexity-constrained asymmetric rank sweep.
