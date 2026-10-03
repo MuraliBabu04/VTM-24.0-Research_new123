@@ -261,11 +261,12 @@ inline void forwardMatrixMult(const TCoeff *src, TCoeff *dst, int shift, size_t 
 // transform matrix has an additional 2^NMF_FORWARD_MATRIX_SCALE_BITS scale, so
 // remove both factor scales and restore that forward scale before applying the
 // normative transform shift.
-template<size_t TR_SIZE, size_t RANK>
+template<size_t TR_SIZE, size_t POS_RANK, size_t NEG_RANK>
 inline void forwardNmfMatrixMult(const TCoeff *src, TCoeff *dst, int shift, size_t numInLines, int skipInLines,
-                                 int skipOutLines, const int32_t (&posW)[TR_SIZE][RANK],
-                                 const int32_t (&posH)[RANK][TR_SIZE], const int32_t (&negW)[TR_SIZE][RANK],
-                                 const int32_t (&negH)[RANK][TR_SIZE])
+                                 int skipOutLines, const int32_t (&posW)[TR_SIZE][POS_RANK],
+                                 const int32_t (&posH)[POS_RANK][TR_SIZE],
+                                 const int32_t (&negW)[TR_SIZE][NEG_RANK],
+                                 const int32_t (&negH)[NEG_RANK][TR_SIZE])
 {
   static_assert(2 * NMF_FACTOR_FRACTIONAL_BITS >= NMF_FORWARD_MATRIX_SCALE_BITS,
                 "NMF fixed-point scale must cover the VTM forward-matrix scale");
@@ -278,22 +279,31 @@ inline void forwardNmfMatrixMult(const TCoeff *src, TCoeff *dst, int shift, size
 
   for (size_t i = 0; i < reducedLine; i++)
   {
-    int64_t posIntermediate[RANK] = {};
-    int64_t negIntermediate[RANK] = {};
-    for (size_t r = 0; r < RANK; r++)
+    int64_t posIntermediate[POS_RANK] = {};
+    int64_t negIntermediate[NEG_RANK] = {};
+    for (size_t r = 0; r < POS_RANK; r++)
     {
       for (size_t k = 0; k < TR_SIZE; k++)
       {
         posIntermediate[r] += int64_t(posH[r][k]) * src[i * TR_SIZE + k];
+      }
+    }
+    for (size_t r = 0; r < NEG_RANK; r++)
+    {
+      for (size_t k = 0; k < TR_SIZE; k++)
+      {
         negIntermediate[r] += int64_t(negH[r][k]) * src[i * TR_SIZE + k];
       }
     }
     for (size_t j = 0; j < cutoff; j++)
     {
       int64_t sum = 0;
-      for (size_t r = 0; r < RANK; r++)
+      for (size_t r = 0; r < POS_RANK; r++)
       {
         sum += int64_t(posW[j][r]) * posIntermediate[r];
+      }
+      for (size_t r = 0; r < NEG_RANK; r++)
+      {
         sum -= int64_t(negW[j][r]) * negIntermediate[r];
       }
       dst[j * numInLines + i] = TCoeff((sum + rndFactor) >> totalShift);
@@ -315,37 +325,37 @@ inline void forwardNmfMatrixMult(const TCoeff *src, TCoeff *dst, int shift, size
 
 void nmfForwardDST7_B8(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
 {
-  forwardNmfMatrixMult<8, 1>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDST7P8PosW, g_nmfDST7P8PosH,
+  forwardNmfMatrixMult<8, NMF_DST7_P8_POS_RANK, NMF_DST7_P8_NEG_RANK>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDST7P8PosW, g_nmfDST7P8PosH,
                              g_nmfDST7P8NegW, g_nmfDST7P8NegH);
 }
 
 void nmfForwardDST7_B16(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
 {
-  forwardNmfMatrixMult<16, 3>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDST7P16PosW, g_nmfDST7P16PosH,
+  forwardNmfMatrixMult<16, NMF_DST7_P16_POS_RANK, NMF_DST7_P16_NEG_RANK>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDST7P16PosW, g_nmfDST7P16PosH,
                               g_nmfDST7P16NegW, g_nmfDST7P16NegH);
 }
 
 void nmfForwardDST7_B32(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
 {
-  forwardNmfMatrixMult<32, 6>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDST7P32PosW, g_nmfDST7P32PosH,
+  forwardNmfMatrixMult<32, NMF_DST7_P32_POS_RANK, NMF_DST7_P32_NEG_RANK>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDST7P32PosW, g_nmfDST7P32PosH,
                               g_nmfDST7P32NegW, g_nmfDST7P32NegH);
 }
 
 void nmfForwardDCT8_B8(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
 {
-  forwardNmfMatrixMult<8, 1>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDCT8P8PosW, g_nmfDCT8P8PosH,
+  forwardNmfMatrixMult<8, NMF_DCT8_P8_POS_RANK, NMF_DCT8_P8_NEG_RANK>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDCT8P8PosW, g_nmfDCT8P8PosH,
                              g_nmfDCT8P8NegW, g_nmfDCT8P8NegH);
 }
 
 void nmfForwardDCT8_B16(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
 {
-  forwardNmfMatrixMult<16, 3>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDCT8P16PosW, g_nmfDCT8P16PosH,
+  forwardNmfMatrixMult<16, NMF_DCT8_P16_POS_RANK, NMF_DCT8_P16_NEG_RANK>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDCT8P16PosW, g_nmfDCT8P16PosH,
                               g_nmfDCT8P16NegW, g_nmfDCT8P16NegH);
 }
 
 void nmfForwardDCT8_B32(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
 {
-  forwardNmfMatrixMult<32, 6>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDCT8P32PosW, g_nmfDCT8P32PosH,
+  forwardNmfMatrixMult<32, NMF_DCT8_P32_POS_RANK, NMF_DCT8_P32_NEG_RANK>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDCT8P32PosW, g_nmfDCT8P32PosH,
                               g_nmfDCT8P32NegW, g_nmfDCT8P32NegH);
 }
 
