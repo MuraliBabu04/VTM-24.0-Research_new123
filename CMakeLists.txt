@@ -148,3 +148,14 @@ add_subdirectory( "source/App/SubpicMergeApp" )
 if( EXTENSION_360_VIDEO )
   add_subdirectory( "source/App/utils/360ConvertApp" )
 endif()
+
+# Opt-in checks and exact target paths for the isolated NMF experiment.
+option(NMF_VERIFY "Build NMF transform verification" OFF)
+if(NMF_VERIFY)
+  add_executable(NmfTransformCheck nmf_experiment/verify_hybrid.cpp)
+  target_link_libraries(NmfTransformCheck CommonLib)
+  file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/nmf-check-$<CONFIG>.path"
+       CONTENT "$<TARGET_FILE:NmfTransformCheck>")
+  file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/nmf-encoder-$<CONFIG>.path"
+       CONTENT "$<TARGET_FILE:EncoderApp>")
+endif()

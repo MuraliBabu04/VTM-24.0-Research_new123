@@ -44,6 +44,8 @@
 #include <math.h>
 #include <limits>
 #include <memory.h>
+#include <cstdio>
+#include <cstdlib>
 
 
 // ********************************** DCT-II **********************************
@@ -256,6 +258,17 @@ inline void forwardMatrixMult(const TCoeff *src, TCoeff *dst, int shift, size_t 
   }
 }
 
+// One message per exercised kernel, enabled only for verification runs.
+static bool reportNmfKernel(const char *kernel, int size, int rank)
+{
+  if (std::getenv("NMF_AUDIT"))
+  {
+    std::fprintf(stderr, "NMF_AUDIT kernel=%s size=%d mode=%s ranks=%d,%d scale_bits=%d\n",
+                 kernel, size, rank ? "nmf" : "exact", rank, rank, NMF_FORWARD_MATRIX_SCALE_BITS);
+  }
+  return true;
+}
+
 // Fixed-point positive/negative NMF used by the encoder-side MTS experiment.
 // The stored factors approximate VTM's low-precision MTS basis. VTM's forward
 // transform matrix has an additional 2^NMF_FORWARD_MATRIX_SCALE_BITS scale, so
@@ -313,38 +326,48 @@ inline void forwardNmfMatrixMult(const TCoeff *src, TCoeff *dst, int shift, size
   }
 }
 
-void nmfForwardDST7_B8(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
+void hybridForwardDST7_B8(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
 {
-  forwardNmfMatrixMult<8, 1>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDST7P8PosW, g_nmfDST7P8PosH,
-                             g_nmfDST7P8NegW, g_nmfDST7P8NegH);
+  static const bool reported = reportNmfKernel("DST7", 8, 0);
+  (void)reported;
+  fastForwardDST7_B8(src, dst, shift, line, iSkipLine, iSkipLine2);
 }
 
 void nmfForwardDST7_B16(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
 {
+  static const bool reported = reportNmfKernel("DST7", 16, 3);
+  (void)reported;
   forwardNmfMatrixMult<16, 3>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDST7P16PosW, g_nmfDST7P16PosH,
                               g_nmfDST7P16NegW, g_nmfDST7P16NegH);
 }
 
 void nmfForwardDST7_B32(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
 {
+  static const bool reported = reportNmfKernel("DST7", 32, 6);
+  (void)reported;
   forwardNmfMatrixMult<32, 6>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDST7P32PosW, g_nmfDST7P32PosH,
                               g_nmfDST7P32NegW, g_nmfDST7P32NegH);
 }
 
-void nmfForwardDCT8_B8(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
+void hybridForwardDCT8_B8(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
 {
-  forwardNmfMatrixMult<8, 1>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDCT8P8PosW, g_nmfDCT8P8PosH,
-                             g_nmfDCT8P8NegW, g_nmfDCT8P8NegH);
+  static const bool reported = reportNmfKernel("DCT8", 8, 0);
+  (void)reported;
+  fastForwardDCT8_B8(src, dst, shift, line, iSkipLine, iSkipLine2);
 }
 
 void nmfForwardDCT8_B16(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
 {
+  static const bool reported = reportNmfKernel("DCT8", 16, 3);
+  (void)reported;
   forwardNmfMatrixMult<16, 3>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDCT8P16PosW, g_nmfDCT8P16PosH,
                               g_nmfDCT8P16NegW, g_nmfDCT8P16NegH);
 }
 
 void nmfForwardDCT8_B32(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
 {
+  static const bool reported = reportNmfKernel("DCT8", 32, 6);
+  (void)reported;
   forwardNmfMatrixMult<32, 6>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDCT8P32PosW, g_nmfDCT8P32PosH,
                               g_nmfDCT8P32NegW, g_nmfDCT8P32NegH);
 }
