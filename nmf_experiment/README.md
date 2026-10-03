@@ -51,6 +51,24 @@ cmake --build build --target EncoderApp --parallel "$(nproc)"
 Generated numerical records are stored under `nmf_results/`. No CD-SATM or
 CSSATM log, bitstream, or proposed result is used by this experiment.
 
+## Asymmetric-rank improvement
+
+The second design keeps the mandatory 8-bit forward-scale correction and assigns
+the positive and negative ranks independently under a strict multiplication
+budget:
+
+- DCT-VIII: 8=(1,2), 16=(4,3), 32=(8,6)
+- DST-VII: 8=(2,1), 16=(3,4), 32=(7,7)
+
+A non-negative least-squares gain calibrates each reconstructed transform row
+and is absorbed into the W factors, so it adds no runtime multiplications.
+Relative Frobenius error is reduced to about 0.765--0.805, compared with about
+0.815--0.885 for the original equal-rank configuration. The retained dense
+multiplication savings are 25% for size 8 and 12.5% for sizes 16 and 32.
+
+QP32 and QP37 are used first as a controlled verification. A final BD-rate claim
+still requires corrected QP22, QP27, QP32 and QP37 results.
+
 ## Scale-calibration verification
 
 The `nmf-scale-calibrated-qp32-37` branch isolates the scale correction and
