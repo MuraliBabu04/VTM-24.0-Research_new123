@@ -1,0 +1,200 @@
+name: NMF Exact Correction - Paired Anchor - QP32 QP37
+
+on:
+  workflow_dispatch:
+    inputs:
+      sequence_url:
+        description: Google Drive URL for Kimono1 1920x1080 24fps
+        required: false
+        default: https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view?usp=drive_link
+        type: string
+  push:
+    branches: [nmf-exact-correction-qp32-37]
+    paths:
+      - .github/workflows/run-nmf-exact-correction-qp32-37.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nmf-exact-correction-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Build paired encoders and verify exact correction
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify selected dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'NMF_EXACT_ANCHOR' source/Lib/CommonLib/TrQuant.cpp
+          grep -q 'nmfExactForwardDCT8_B16' source/Lib/CommonLib/TrQuant.cpp
+          grep -q 'nmfExactForwardDST7_B32' source/Lib/CommonLib/TrQuant.cpp
+          ! grep -Ei 'cd[-_]?satm|cssatm' source/Lib/CommonLib/TrQuant.cpp source/Lib/CommonLib/NmfExactCorrection.h
+
+      - name: Build normative paired anchor
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p prepared
+          cmake -S . -B build-exact-anchor -DCMAKE_BUILD_TYPE=Release -DNMF_VERIFY=ON -DNMF_EXACT_ANCHOR=ON
+          cmake --build build-exact-anchor --target EncoderApp --parallel "$(nproc)"
+          cp "$(cat build-exact-anchor/nmf-encoder-Release.path)" prepared/EncoderAppAnchor
+
+      - name: Build and test NMF exact-correction encoder
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-exact-proposed -DCMAKE_BUILD_TYPE=Release -DNMF_VERIFY=ON -DNMF_EXACT_ANCHOR=OFF
+          cmake --build build-exact-proposed --target EncoderApp NmfTransformCheck --parallel "$(nproc)"
+          NMF_AUDIT=1 "$(cat build-exact-proposed/nmf-check-Release.path)" 2>&1 | tee prepared/exact-check.log
+          grep -q 'PASS: 5040 exact integer transform cases' prepared/exact-check.log
+          cp "$(cat build-exact-proposed/nmf-encoder-Release.path)" prepared/EncoderAppExactCorrection
+          sha256sum prepared/EncoderAppAnchor prepared/EncoderAppExactCorrection \
+            source/Lib/CommonLib/NmfMtsFactors.h source/Lib/CommonLib/NmfExactCorrection.h \
+            source/Lib/CommonLib/TrQuant_EMT.cpp source/Lib/CommonLib/TrQuant.cpp \
+            cfg/encoder_randomaccess_vtm.cfg > prepared/build.sha256
+          git rev-parse HEAD > prepared/commit.txt
+          c++ --version > prepared/compiler.txt
+
+      - name: Check normal-precision integer arithmetic with UBSan
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -O1 -g -fsanitize=undefined -fno-sanitize-recover=undefined \
+            -Wno-sign-compare -I source/Lib -I source/Lib/CommonLib -I source/Lib/libmd5 \
+            nmf_experiment/verify_exact_correction.cpp source/Lib/CommonLib/TrQuant_EMT.cpp \
+            source/Lib/CommonLib/RomTr.cpp -o /tmp/exact-check-ubsan
+          /tmp/exact-check-ubsan 2>&1 | tee prepared/ubsan-check.log
+
+      - name: Check high-precision build as well
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -O2 -DRExt__HIGH_BIT_DEPTH_SUPPORT=1 -Wno-sign-compare \
+            -I source/Lib -I source/Lib/CommonLib -I source/Lib/libmd5 \
+            nmf_experiment/verify_exact_correction.cpp source/Lib/CommonLib/TrQuant_EMT.cpp \
+            source/Lib/CommonLib/RomTr.cpp -o /tmp/exact-check-high
+          /tmp/exact-check-high 2>&1 | tee prepared/high-precision-check.log
+
+      - name: Download and verify Kimono1
+        env:
+          SEQUENCE_URL: ${{ inputs.sequence_url || 'https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view?usp=drive_link' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check gdown
+          mkdir -p test_sequence
+          gdown "$SEQUENCE_URL" -O test_sequence/B1_Kimono1_1920x1080_24.yuv
+          test "$(stat -c%s test_sequence/B1_Kimono1_1920x1080_24.yuv)" -eq 746496000
+          sha256sum test_sequence/B1_Kimono1_1920x1080_24.yuv > test_sequence/input.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nmf-exact-correction-encoders
+          path: prepared/
+          retention-days: 7
+          compression-level: 0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nmf-exact-correction-Kimono1-input
+          path: test_sequence/
+          retention-days: 1
+          compression-level: 0
+
+  verify:
+    name: Paired anchor and exact NMF - QP ${{ matrix.qp }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        qp: [32, 37]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: nmf-exact-correction-encoders
+          path: prepared
+      - uses: actions/download-artifact@v4
+        with:
+          name: nmf-exact-correction-Kimono1-input
+          path: test_sequence
+
+      - name: Encode paired anchor and proposed with identical settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum -c prepared/build.sha256
+          sha256sum -c test_sequence/input.sha256
+          chmod +x prepared/EncoderAppAnchor prepared/EncoderAppExactCorrection
+          qp="${{ matrix.qp }}"
+          out="nmf_results/exact_correction/QP$qp"
+          mkdir -p "$out"
+          cp prepared/commit.txt "$out/commit.txt"
+          cp prepared/build.sha256 "$out/build.sha256"
+          cp prepared/exact-check.log "$out/transform_check.log"
+          cp test_sequence/input.sha256 "$out/input.sha256"
+          for variant in anchor proposed; do
+            encoder=prepared/EncoderAppAnchor
+            if [ "$variant" = proposed ]; then encoder=prepared/EncoderAppExactCorrection; fi
+            NMF_AUDIT=1 "$encoder" \
+              -c cfg/encoder_randomaccess_vtm.cfg \
+              -i test_sequence/B1_Kimono1_1920x1080_24.yuv \
+              -wdt 1920 -hgt 1080 -fr 24 \
+              --InputBitDepth=8 --InputChromaFormat=420 \
+              -f 32 -q "$qp" --MTS=1 --LFNST=0 \
+              -b "$out/${variant}_QP${qp}.vvc" \
+              2>&1 | tee "$out/${variant}_QP${qp}.log"
+          done
+
+      - name: Compare complete bitstreams and measured metrics
+        shell: bash
+        run: |
+          set -euo pipefail
+          qp="${{ matrix.qp }}"
+          out="nmf_results/exact_correction/QP$qp"
+          sha256sum "$out/anchor_QP${qp}.vvc" "$out/proposed_QP${qp}.vvc" | tee "$out/bitstreams.sha256"
+          python3 nmf_experiment/compare_exact_correction.py \
+            "$out/anchor_QP${qp}.log" "$out/proposed_QP${qp}.log" \
+            "$out/anchor_QP${qp}.vvc" "$out/proposed_QP${qp}.vvc" "$qp" \
+            | tee "$out/comparison_QP${qp}.json"
+          cmp "$out/anchor_QP${qp}.vvc" "$out/proposed_QP${qp}.vvc"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nmf-exact-correction-QP${{ matrix.qp }}-LFNST0-32F
+          path: nmf_results/exact_correction/QP${{ matrix.qp }}/
+          if-no-files-found: warn
+          retention-days: 30
+
+  aggregate:
+    name: Collect paired QP32 and QP37 comparisons
+    if: always()
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: nmf-exact-correction-QP*-LFNST0-32F
+          path: comparisons
+      - name: Print comparisons
+        shell: bash
+        run: |
+          find comparisons -name 'comparison_QP*.json' -type f -exec cat {} \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nmf-exact-correction-combined-QP32-QP37
+          path: comparisons/
+          if-no-files-found: warn
+          retention-days: 30

@@ -150,9 +150,13 @@ if( EXTENSION_360_VIDEO )
 endif()
 
 # Opt-in checks and exact target paths for the isolated NMF experiment.
+option(NMF_EXACT_ANCHOR "Build normative forward transform dispatch for paired verification" OFF)
+if(NMF_EXACT_ANCHOR)
+  target_compile_definitions(CommonLib PUBLIC NMF_EXACT_ANCHOR=1)
+endif()
 option(NMF_VERIFY "Build NMF transform verification" OFF)
 if(NMF_VERIFY)
-  add_executable(NmfTransformCheck nmf_experiment/verify_hybrid.cpp)
+  add_executable(NmfTransformCheck nmf_experiment/verify_exact_correction.cpp)
   target_link_libraries(NmfTransformCheck CommonLib)
   file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/nmf-check-$<CONFIG>.path"
        CONTENT "$<TARGET_FILE:NmfTransformCheck>")

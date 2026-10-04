@@ -266,15 +266,17 @@ void TrQuant::init( const Quant* otherQuant,
   initX86();
 #endif
 
-  // Hybrid experiment: exact 8-point MTS, equal-rank NMF only at 16/32.
+#if !defined(NMF_EXACT_ANCHOR)
+  // Hybrid experiment: exact 8-point MTS, NMF plus exact correction at 16/32.
   // Four-point MTS and every inverse transform remain normative.
   // Apply after SIMD initialization so these audited kernels execute.
   m_fwdTx[TransType::DCT8][2] = hybridForwardDCT8_B8;
-  m_fwdTx[TransType::DCT8][3] = nmfForwardDCT8_B16;
-  m_fwdTx[TransType::DCT8][4] = nmfForwardDCT8_B32;
+  m_fwdTx[TransType::DCT8][3] = nmfExactForwardDCT8_B16;
+  m_fwdTx[TransType::DCT8][4] = nmfExactForwardDCT8_B32;
   m_fwdTx[TransType::DST7][2] = hybridForwardDST7_B8;
-  m_fwdTx[TransType::DST7][3] = nmfForwardDST7_B16;
-  m_fwdTx[TransType::DST7][4] = nmfForwardDST7_B32;
+  m_fwdTx[TransType::DST7][3] = nmfExactForwardDST7_B16;
+  m_fwdTx[TransType::DST7][4] = nmfExactForwardDST7_B32;
+#endif
 }
 
 void TrQuant::fwdLfnstNxN( TCoeff* src, TCoeff* dst, const uint32_t mode, const uint32_t index, const uint32_t size, int zeroOutSize )

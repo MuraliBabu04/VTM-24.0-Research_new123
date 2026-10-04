@@ -39,6 +39,7 @@
 
 #include "Rom.h"
 #include "NmfMtsFactors.h"
+#include "NmfExactCorrection.h"
 
 #include <stdlib.h>
 #include <math.h>
@@ -263,8 +264,9 @@ static bool reportNmfKernel(const char *kernel, int size, int rank)
 {
   if (std::getenv("NMF_AUDIT"))
   {
-    std::fprintf(stderr, "NMF_AUDIT kernel=%s size=%d mode=%s ranks=%d,%d scale_bits=%d\n",
-                 kernel, size, rank ? "nmf" : "exact", rank, rank, NMF_FORWARD_MATRIX_SCALE_BITS);
+    std::fprintf(stderr, "NMF_AUDIT kernel=%s size=%d mode=%s ranks=%d,%d factor_bits=%d forward_precision_bits=%d\n",
+                 kernel, size, rank ? "nmf" : "exact", rank, rank, NMF_FACTOR_FRACTIONAL_BITS,
+                 RExt__HIGH_PRECISION_FORWARD_TRANSFORM ? 8 : 0);
   }
   return true;
 }
@@ -370,6 +372,97 @@ void nmfForwardDCT8_B32(const TCoeff *src, TCoeff *dst, int shift, int line, int
   (void)reported;
   forwardNmfMatrixMult<32, 6>(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDCT8P32PosW, g_nmfDCT8P32PosH,
                               g_nmfDCT8P32NegW, g_nmfDCT8P32NegH);
+}
+
+
+// Exact correction is added in the factor-product precision, before rounding.
+template<size_t N, size_t R>
+static void forwardNmfExact(const TCoeff *src, TCoeff *dst, int shift, int lines, int skip, int cut,
+                            const int32_t (&pw)[N][R], const int32_t (&ph)[R][N],
+                            const int32_t (&nw)[N][R], const int32_t (&nh)[R][N],
+                            const NmfExactCorrection<N> &correction)
+{
+  const int totalShift = shift + 2 * NMF_FACTOR_FRACTIONAL_BITS;
+  CHECK(totalShift <= 0 || totalShift >= 63, "Invalid NMF exact-correction shift");
+  const int64_t rounding = int64_t(1) << (totalShift - 1);
+  const int activeLines = lines - skip;
+  const size_t activeRows = N - cut;
+  for (int i = 0; i < activeLines; ++i)
+  {
+    int64_t positive[R] = {}, negative[R] = {};
+    for (size_t r = 0; r < R; ++r)
+      for (size_t k = 0; k < N; ++k)
+      {
+        positive[r] += int64_t(ph[r][k]) * src[i * N + k];
+        negative[r] += int64_t(nh[r][k]) * src[i * N + k];
+      }
+    for (size_t j = 0; j < activeRows; ++j)
+    {
+      int64_t sum = 0;
+      for (size_t r = 0; r < R; ++r)
+        sum += int64_t(pw[j][r]) * positive[r] - int64_t(nw[j][r]) * negative[r];
+      for (size_t k = 0; k < N; ++k)
+        if (correction.coefficient[j][k] != 0)
+          sum += correction.coefficient[j][k] * src[i * N + k];
+      dst[j * lines + i] = TCoeff((sum + rounding) >> totalShift);
+    }
+  }
+  for (size_t j = 0; j < activeRows; ++j)
+    std::fill_n(dst + j * lines + activeLines, skip, 0);
+  std::fill_n(dst + activeRows * lines, cut * lines, 0);
+}
+
+static bool reportNmfExact(const char *type, int size, int rank, size_t nonzero)
+{
+  if (std::getenv("NMF_AUDIT"))
+    std::fprintf(stderr, "NMF_EXACT kernel=%s size=%d ranks=%d,%d correction_nnz=%zu factor_bits=%d forward_precision_bits=%d\n",
+                 type, size, rank, rank, nonzero, NMF_FACTOR_FRACTIONAL_BITS,
+                 RExt__HIGH_PRECISION_FORWARD_TRANSFORM ? 8 : 0);
+  return true;
+}
+
+void nmfExactForwardDCT8_B16(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
+{
+  static const auto correction = makeNmfExactCorrection(g_nmfDCT8P16PosW, g_nmfDCT8P16PosH,
+                                                       g_nmfDCT8P16NegW, g_nmfDCT8P16NegH,
+                                                       g_trCoreDCT8P16[TRANSFORM_FORWARD][0]);
+  static const bool reported = reportNmfExact("DCT8", 16, 3, correction.nonzero);
+  (void)reported;
+  forwardNmfExact(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDCT8P16PosW, g_nmfDCT8P16PosH,
+                  g_nmfDCT8P16NegW, g_nmfDCT8P16NegH, correction);
+}
+
+void nmfExactForwardDCT8_B32(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
+{
+  static const auto correction = makeNmfExactCorrection(g_nmfDCT8P32PosW, g_nmfDCT8P32PosH,
+                                                       g_nmfDCT8P32NegW, g_nmfDCT8P32NegH,
+                                                       g_trCoreDCT8P32[TRANSFORM_FORWARD][0]);
+  static const bool reported = reportNmfExact("DCT8", 32, 6, correction.nonzero);
+  (void)reported;
+  forwardNmfExact(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDCT8P32PosW, g_nmfDCT8P32PosH,
+                  g_nmfDCT8P32NegW, g_nmfDCT8P32NegH, correction);
+}
+
+void nmfExactForwardDST7_B16(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
+{
+  static const auto correction = makeNmfExactCorrection(g_nmfDST7P16PosW, g_nmfDST7P16PosH,
+                                                       g_nmfDST7P16NegW, g_nmfDST7P16NegH,
+                                                       g_trCoreDST7P16[TRANSFORM_FORWARD][0]);
+  static const bool reported = reportNmfExact("DST7", 16, 3, correction.nonzero);
+  (void)reported;
+  forwardNmfExact(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDST7P16PosW, g_nmfDST7P16PosH,
+                  g_nmfDST7P16NegW, g_nmfDST7P16NegH, correction);
+}
+
+void nmfExactForwardDST7_B32(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2)
+{
+  static const auto correction = makeNmfExactCorrection(g_nmfDST7P32PosW, g_nmfDST7P32PosH,
+                                                       g_nmfDST7P32NegW, g_nmfDST7P32NegH,
+                                                       g_trCoreDST7P32[TRANSFORM_FORWARD][0]);
+  static const bool reported = reportNmfExact("DST7", 32, 6, correction.nonzero);
+  (void)reported;
+  forwardNmfExact(src, dst, shift, line, iSkipLine, iSkipLine2, g_nmfDST7P32PosW, g_nmfDST7P32PosH,
+                  g_nmfDST7P32NegW, g_nmfDST7P32NegH, correction);
 }
 
 /** 8x8 forward transform implemented using partial butterfly structure (1D)

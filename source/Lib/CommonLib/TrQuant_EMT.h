@@ -85,4 +85,9 @@ void nmfForwardDCT8_B16 (const TCoeff *src, TCoeff *dst, int shift, int line, in
 void nmfForwardDCT8_B32 (const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2);
 
 
+void nmfExactForwardDCT8_B16(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2);
+void nmfExactForwardDCT8_B32(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2);
+void nmfExactForwardDST7_B16(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2);
+void nmfExactForwardDST7_B32(const TCoeff *src, TCoeff *dst, int shift, int line, int iSkipLine, int iSkipLine2);
+
 #endif // __TRQUANT__
