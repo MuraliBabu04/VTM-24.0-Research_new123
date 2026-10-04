@@ -1,0 +1,430 @@
+name: Exact NMF - BCDE first then A1 - Parallel QPs
+'on':
+  workflow_dispatch: null
+  push:
+    branches:
+    - nmf-exact-bcde-then-a1-allqp
+    paths:
+    - .github/workflows/run-nmf-exact-bcde-then-a1.yml
+    - nmf_experiment/prepare_batch_input.py
+    - nmf_experiment/collect_batch.py
+permissions:
+  contents: read
+concurrency:
+  group: nmf-exact-full-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    name: Build exact-correction and normative encoders; verify 5040 cases
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v4
+    - name: Verify selected dispatch
+      shell: bash
+      run: |
+        set -euo pipefail
+        grep -q 'NMF_EXACT_ANCHOR' source/Lib/CommonLib/TrQuant.cpp
+        grep -q 'nmfExactForwardDCT8_B16' source/Lib/CommonLib/TrQuant.cpp
+        grep -q 'nmfExactForwardDST7_B32' source/Lib/CommonLib/TrQuant.cpp
+        ! grep -Ei 'cd[-_]?satm|cssatm' source/Lib/CommonLib/TrQuant.cpp source/Lib/CommonLib/NmfExactCorrection.h
+    - name: Build normative paired anchor
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p prepared
+        cmake -S . -B build-exact-anchor -DCMAKE_BUILD_TYPE=Release -DNMF_VERIFY=ON -DNMF_EXACT_ANCHOR=ON
+        cmake --build build-exact-anchor --target EncoderApp --parallel "$(nproc)"
+        cp "$(cat build-exact-anchor/nmf-encoder-Release.path)" prepared/EncoderAppAnchor
+    - name: Build and test NMF exact-correction encoder
+      shell: bash
+      run: |
+        set -euo pipefail
+        cmake -S . -B build-exact-proposed -DCMAKE_BUILD_TYPE=Release -DNMF_VERIFY=ON -DNMF_EXACT_ANCHOR=OFF
+        cmake --build build-exact-proposed --target EncoderApp NmfTransformCheck --parallel "$(nproc)"
+        NMF_AUDIT=1 "$(cat build-exact-proposed/nmf-check-Release.path)" 2>&1 | tee prepared/exact-check.log
+        grep -q 'PASS: 5040 exact integer transform cases' prepared/exact-check.log
+        cp "$(cat build-exact-proposed/nmf-encoder-Release.path)" prepared/EncoderAppExactCorrection
+        sha256sum prepared/EncoderAppAnchor prepared/EncoderAppExactCorrection \
+          source/Lib/CommonLib/NmfMtsFactors.h source/Lib/CommonLib/NmfExactCorrection.h \
+          source/Lib/CommonLib/TrQuant_EMT.cpp source/Lib/CommonLib/TrQuant.cpp \
+          cfg/encoder_randomaccess_vtm.cfg cfg/per-sequence/Kimono.cfg cfg/per-sequence/RaceHorsesC.cfg cfg/per-sequence/RaceHorses.cfg cfg/per-sequence/FourPeople.cfg cfg/per-sequence/Tango2.cfg > prepared/build.sha256
+        git rev-parse HEAD > prepared/commit.txt
+        c++ --version > prepared/compiler.txt
+    - name: Check normal-precision integer arithmetic with UBSan
+      shell: bash
+      run: |
+        set -euo pipefail
+        g++ -std=c++17 -O1 -g -fsanitize=undefined -fno-sanitize-recover=undefined \
+          -Wno-sign-compare -I source/Lib -I source/Lib/CommonLib -I source/Lib/libmd5 \
+          nmf_experiment/verify_exact_correction.cpp source/Lib/CommonLib/TrQuant_EMT.cpp \
+          source/Lib/CommonLib/RomTr.cpp -o /tmp/exact-check-ubsan
+        /tmp/exact-check-ubsan 2>&1 | tee prepared/ubsan-check.log
+    - name: Check high-precision build as well
+      shell: bash
+      run: |
+        set -euo pipefail
+        g++ -std=c++17 -O2 -DRExt__HIGH_BIT_DEPTH_SUPPORT=1 -Wno-sign-compare \
+          -I source/Lib -I source/Lib/CommonLib -I source/Lib/libmd5 \
+          nmf_experiment/verify_exact_correction.cpp source/Lib/CommonLib/TrQuant_EMT.cpp \
+          source/Lib/CommonLib/RomTr.cpp -o /tmp/exact-check-high
+        /tmp/exact-check-high 2>&1 | tee prepared/high-precision-check.log
+    - uses: actions/upload-artifact@v4
+      with:
+        name: batch-exact-encoders
+        path: prepared/
+        retention-days: 7
+        compression-level: 0
+  prepare-bcde:
+    name: Prepare ${{ matrix.sequence }} 32-frame input
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        sequence:
+        - B1
+        - C1
+        - D1
+        - E1
+    steps:
+    - uses: actions/checkout@v4
+    - name: Prepare validated input
+      run: |
+        set -euo pipefail
+        python3 -m pip install --disable-pip-version-check gdown
+        python3 nmf_experiment/prepare_batch_input.py "${{ matrix.sequence }}"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: batch-input-${{ matrix.sequence }}
+        path: test_sequence/
+        retention-days: 2
+        compression-level: 0
+  encode-bcde:
+    name: ${{ matrix.sequence }} QP${{ matrix.qp }} ${{ matrix.variant }}
+    needs:
+    - build
+    - prepare-bcde
+    if: ${{ always() && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 28
+      matrix:
+        include:
+        - sequence: B1
+          qp: 22
+          variant: anchor
+        - sequence: B1
+          qp: 22
+          variant: proposed
+        - sequence: B1
+          qp: 27
+          variant: anchor
+        - sequence: B1
+          qp: 27
+          variant: proposed
+        - sequence: C1
+          qp: 22
+          variant: anchor
+        - sequence: C1
+          qp: 22
+          variant: proposed
+        - sequence: C1
+          qp: 27
+          variant: anchor
+        - sequence: C1
+          qp: 27
+          variant: proposed
+        - sequence: C1
+          qp: 32
+          variant: anchor
+        - sequence: C1
+          qp: 32
+          variant: proposed
+        - sequence: C1
+          qp: 37
+          variant: anchor
+        - sequence: C1
+          qp: 37
+          variant: proposed
+        - sequence: D1
+          qp: 22
+          variant: anchor
+        - sequence: D1
+          qp: 22
+          variant: proposed
+        - sequence: D1
+          qp: 27
+          variant: anchor
+        - sequence: D1
+          qp: 27
+          variant: proposed
+        - sequence: D1
+          qp: 32
+          variant: anchor
+        - sequence: D1
+          qp: 32
+          variant: proposed
+        - sequence: D1
+          qp: 37
+          variant: anchor
+        - sequence: D1
+          qp: 37
+          variant: proposed
+        - sequence: E1
+          qp: 22
+          variant: anchor
+        - sequence: E1
+          qp: 22
+          variant: proposed
+        - sequence: E1
+          qp: 27
+          variant: anchor
+        - sequence: E1
+          qp: 27
+          variant: proposed
+        - sequence: E1
+          qp: 32
+          variant: anchor
+        - sequence: E1
+          qp: 32
+          variant: proposed
+        - sequence: E1
+          qp: 37
+          variant: anchor
+        - sequence: E1
+          qp: 37
+          variant: proposed
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v4
+      with:
+        name: batch-exact-encoders
+        path: prepared
+    - uses: actions/download-artifact@v4
+      with:
+        name: batch-input-${{ matrix.sequence }}
+        path: test_sequence
+    - name: Encode 32 frames with MTS1 LFNST0
+      shell: bash
+      env:
+        SEQ: ${{ matrix.sequence }}
+        QP: ${{ matrix.qp }}
+        VARIANT: ${{ matrix.variant }}
+      run: |
+        set -euo pipefail
+        sha256sum -c prepared/build.sha256
+        sha256sum -c test_sequence/input.sha256
+        out="results/$SEQ/QP$QP/$VARIANT"
+        mkdir -p "$out"
+        cp prepared/{commit.txt,build.sha256,compiler.txt,exact-check.log,ubsan-check.log,high-precision-check.log} "$out/"
+        cp test_sequence/{input.sha256,metadata.json} "$out/"
+        cfg=$(python3 -c 'import json; print(json.load(open("test_sequence/metadata.json"))["cfg"])')
+        cfg_args=()
+        if [ "$SEQ" != B1 ]; then cfg_args=(-c "cfg/per-sequence/$cfg"); fi
+        encoder=prepared/EncoderAppAnchor
+        if [ "$VARIANT" = proposed ]; then encoder=prepared/EncoderAppExactCorrection; fi
+        chmod +x "$encoder"
+        # Explicit geometry prevents accidental use of a different RaceHorses class.
+        read -r width height fps depth < <(python3 -c 'import json; m=json.load(open("test_sequence/metadata.json")); print(m["width"],m["height"],m["fps"],m["bitdepth"])')
+        printf '%s\n' "$encoder -c cfg/encoder_randomaccess_vtm.cfg ${cfg_args[*]} -i test_sequence/input.yuv -wdt $width -hgt $height -fr $fps --InputBitDepth=$depth --InputChromaFormat=420 -f 32 -q $QP --MTS=1 --LFNST=0" > "$out/command.txt"
+        NMF_AUDIT=1 "$encoder" -c cfg/encoder_randomaccess_vtm.cfg "${cfg_args[@]}" \
+         -i test_sequence/input.yuv -wdt "$width" -hgt "$height" -fr "$fps" \
+         --InputBitDepth="$depth" --InputChromaFormat=420 -f 32 -q "$QP" --MTS=1 --LFNST=0 \
+         -b "$out/output.vvc" 2>&1 | tee "$out/encode.log"
+        sha256sum "$out/output.vvc" | tee "$out/bitstream.sha256"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: batch-encode-${{ matrix.sequence }}-QP${{ matrix.qp }}-${{ matrix.variant }}
+        path: results/
+        if-no-files-found: warn
+        retention-days: 30
+        compression-level: 0
+  compare-bcde:
+    name: Compare BCDE anchor and proposed pairs
+    needs: encode-bcde
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v4
+      continue-on-error: true
+      with:
+        pattern: batch-encode-[BCDE]1-*
+        path: results
+        merge-multiple: true
+    - name: Compare bitstreams and tabulate actual metrics
+      run: |
+        set -euo pipefail
+        python3 nmf_experiment/collect_batch.py bcde
+    - name: Add comparison table
+      if: always()
+      run: test ! -f batch_summary/bcde.md || cat batch_summary/bcde.md >> "$GITHUB_STEP_SUMMARY"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: batch-comparison-bcde
+        path: batch_summary/
+        retention-days: 30
+        if-no-files-found: warn
+  prepare-a1:
+    name: Prepare ${{ matrix.sequence }} 32-frame input
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        sequence:
+        - A1
+    steps:
+    - uses: actions/checkout@v4
+    - name: Prepare validated input
+      run: |
+        set -euo pipefail
+        python3 -m pip install --disable-pip-version-check gdown
+        python3 nmf_experiment/prepare_batch_input.py "${{ matrix.sequence }}"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: batch-input-${{ matrix.sequence }}
+        path: test_sequence/
+        retention-days: 2
+        compression-level: 0
+    needs:
+    - build
+    - compare-bcde
+    if: ${{ always() && needs.build.result == 'success' && needs.compare-bcde.result != 'skipped' }}
+  encode-a1:
+    name: ${{ matrix.sequence }} QP${{ matrix.qp }} ${{ matrix.variant }}
+    needs:
+    - build
+    - prepare-a1
+    if: ${{ always() && needs.build.result == 'success' && needs.prepare-a1.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 28
+      matrix:
+        include:
+        - sequence: A1
+          qp: 22
+          variant: anchor
+        - sequence: A1
+          qp: 22
+          variant: proposed
+        - sequence: A1
+          qp: 27
+          variant: anchor
+        - sequence: A1
+          qp: 27
+          variant: proposed
+        - sequence: A1
+          qp: 32
+          variant: anchor
+        - sequence: A1
+          qp: 32
+          variant: proposed
+        - sequence: A1
+          qp: 37
+          variant: anchor
+        - sequence: A1
+          qp: 37
+          variant: proposed
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v4
+      with:
+        name: batch-exact-encoders
+        path: prepared
+    - uses: actions/download-artifact@v4
+      with:
+        name: batch-input-${{ matrix.sequence }}
+        path: test_sequence
+    - name: Encode 32 frames with MTS1 LFNST0
+      shell: bash
+      env:
+        SEQ: ${{ matrix.sequence }}
+        QP: ${{ matrix.qp }}
+        VARIANT: ${{ matrix.variant }}
+      run: |
+        set -euo pipefail
+        sha256sum -c prepared/build.sha256
+        sha256sum -c test_sequence/input.sha256
+        out="results/$SEQ/QP$QP/$VARIANT"
+        mkdir -p "$out"
+        cp prepared/{commit.txt,build.sha256,compiler.txt,exact-check.log,ubsan-check.log,high-precision-check.log} "$out/"
+        cp test_sequence/{input.sha256,metadata.json} "$out/"
+        cfg=$(python3 -c 'import json; print(json.load(open("test_sequence/metadata.json"))["cfg"])')
+        cfg_args=()
+        if [ "$SEQ" != B1 ]; then cfg_args=(-c "cfg/per-sequence/$cfg"); fi
+        encoder=prepared/EncoderAppAnchor
+        if [ "$VARIANT" = proposed ]; then encoder=prepared/EncoderAppExactCorrection; fi
+        chmod +x "$encoder"
+        # Explicit geometry prevents accidental use of a different RaceHorses class.
+        read -r width height fps depth < <(python3 -c 'import json; m=json.load(open("test_sequence/metadata.json")); print(m["width"],m["height"],m["fps"],m["bitdepth"])')
+        printf '%s\n' "$encoder -c cfg/encoder_randomaccess_vtm.cfg ${cfg_args[*]} -i test_sequence/input.yuv -wdt $width -hgt $height -fr $fps --InputBitDepth=$depth --InputChromaFormat=420 -f 32 -q $QP --MTS=1 --LFNST=0" > "$out/command.txt"
+        NMF_AUDIT=1 "$encoder" -c cfg/encoder_randomaccess_vtm.cfg "${cfg_args[@]}" \
+         -i test_sequence/input.yuv -wdt "$width" -hgt "$height" -fr "$fps" \
+         --InputBitDepth="$depth" --InputChromaFormat=420 -f 32 -q "$QP" --MTS=1 --LFNST=0 \
+         -b "$out/output.vvc" 2>&1 | tee "$out/encode.log"
+        sha256sum "$out/output.vvc" | tee "$out/bitstream.sha256"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: batch-encode-${{ matrix.sequence }}-QP${{ matrix.qp }}-${{ matrix.variant }}
+        path: results/
+        if-no-files-found: warn
+        retention-days: 30
+        compression-level: 0
+  compare-a1:
+    name: Compare A1 anchor and proposed pairs
+    needs: encode-a1
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v4
+      continue-on-error: true
+      with:
+        pattern: batch-encode-A1-*
+        path: results
+        merge-multiple: true
+    - name: Compare bitstreams and tabulate actual metrics
+      run: |
+        set -euo pipefail
+        python3 nmf_experiment/collect_batch.py a1
+    - name: Add comparison table
+      if: always()
+      run: test ! -f batch_summary/a1.md || cat batch_summary/a1.md >> "$GITHUB_STEP_SUMMARY"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: batch-comparison-a1
+        path: batch_summary/
+        retention-days: 30
+        if-no-files-found: warn
+  final:
+    name: Collect full comparison tables
+    needs:
+    - compare-bcde
+    - compare-a1
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/download-artifact@v4
+      continue-on-error: true
+      with:
+        pattern: batch-comparison-*
+        path: all_comparisons
+        merge-multiple: true
+    - name: Print both tables
+      run: find all_comparisons -name "*.md" -type f -exec cat {} \; >> "$GITHUB_STEP_SUMMARY"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: nmf-exact-all-sequence-comparisons
+        path: all_comparisons/
+        retention-days: 30
+        if-no-files-found: warn
