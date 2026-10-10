@@ -1,0 +1,345 @@
+name: Corrected NMF-only - BCDE first then A1 - Paired QPs
+
+'on':
+  workflow_dispatch:
+  push:
+    branches:
+      - nmf-hybrid-bcde-then-a1-allqp
+    paths:
+      - .github/workflows/run-nmf-hybrid-bcde-then-a1.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nmf-hybrid-full-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build corrected NMF-only and paired normative encoders
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify the exact-8 corrected-scale source
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'NMF_FORWARD_MATRIX_SCALE_BITS = 8' source/Lib/CommonLib/NmfMtsFactors.h
+          grep -q '2 \* NMF_FACTOR_FRACTIONAL_BITS - NMF_FORWARD_MATRIX_SCALE_BITS' source/Lib/CommonLib/TrQuant_EMT.cpp
+          grep -q 'hybridForwardDCT8_B8' source/Lib/CommonLib/TrQuant.cpp
+          grep -q 'nmfForwardDCT8_B16' source/Lib/CommonLib/TrQuant.cpp
+          grep -q 'nmfForwardDST7_B32' source/Lib/CommonLib/TrQuant.cpp
+          ! grep -Ei 'NmfExactCorrection|nmfExactForward|cd[-_]?satm|cssatm' \
+            source/Lib/CommonLib/TrQuant.cpp source/Lib/CommonLib/TrQuant_EMT.cpp
+
+      - name: Build corrected NMF-only encoder
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p prepared
+          sha256sum source/Lib/CommonLib/NmfMtsFactors.h \
+            source/Lib/CommonLib/TrQuant_EMT.cpp source/Lib/CommonLib/TrQuant.cpp \
+            > prepared/proposed-source.sha256
+          git rev-parse HEAD > prepared/commit.txt
+          c++ --version > prepared/compiler.txt
+          cmake -S . -B build-hybrid-proposed -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-hybrid-proposed --target EncoderApp --parallel "$(nproc)"
+          cp bin/EncoderAppStatic prepared/EncoderAppHybridNmf
+
+      - name: Build normative anchor from the same source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('source/Lib/CommonLib/TrQuant.cpp')
+          text = p.read_text()
+          replacements = {
+            'm_fwdTx[TransType::DCT8][2] = hybridForwardDCT8_B8;': 'm_fwdTx[TransType::DCT8][2] = fastForwardDCT8_B8;',
+            'm_fwdTx[TransType::DCT8][3] = nmfForwardDCT8_B16;': 'm_fwdTx[TransType::DCT8][3] = fastForwardDCT8_B16;',
+            'm_fwdTx[TransType::DCT8][4] = nmfForwardDCT8_B32;': 'm_fwdTx[TransType::DCT8][4] = fastForwardDCT8_B32;',
+            'm_fwdTx[TransType::DST7][2] = hybridForwardDST7_B8;': 'm_fwdTx[TransType::DST7][2] = fastForwardDST7_B8;',
+            'm_fwdTx[TransType::DST7][3] = nmfForwardDST7_B16;': 'm_fwdTx[TransType::DST7][3] = fastForwardDST7_B16;',
+            'm_fwdTx[TransType::DST7][4] = nmfForwardDST7_B32;': 'm_fwdTx[TransType::DST7][4] = fastForwardDST7_B32;',
+          }
+          for old, new in replacements.items():
+              if text.count(old) != 1:
+                  raise SystemExit(f'Expected exactly one anchor replacement: {old}')
+              text = text.replace(old, new)
+          p.write_text(text)
+          PY
+          cmake -S . -B build-hybrid-anchor -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-hybrid-anchor --target EncoderApp --parallel "$(nproc)"
+          cp bin/EncoderAppStatic prepared/EncoderAppAnchor
+          sha256sum prepared/EncoderAppAnchor prepared/EncoderAppHybridNmf \
+            > prepared/encoder.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hybrid-paired-encoders
+          path: prepared/
+          retention-days: 7
+          compression-level: 0
+
+  prepare-bcde:
+    name: Prepare ${{ matrix.sequence }} 32-frame input
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        sequence: [B1, C1, D1, E1]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare validated input
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check gdown
+          python3 nmf_experiment/prepare_batch_input.py "${{ matrix.sequence }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hybrid-input-${{ matrix.sequence }}
+          path: test_sequence/
+          retention-days: 2
+          compression-level: 0
+
+  encode-bcde:
+    name: ${{ matrix.sequence }} QP${{ matrix.qp }} ${{ matrix.variant }}
+    needs: [build, prepare-bcde]
+    if: ${{ always() && needs.build.result == 'success' && needs.prepare-bcde.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 28
+      matrix:
+        include:
+          - { sequence: B1, qp: 22, variant: anchor }
+          - { sequence: B1, qp: 22, variant: proposed }
+          - { sequence: B1, qp: 27, variant: anchor }
+          - { sequence: B1, qp: 27, variant: proposed }
+          - { sequence: C1, qp: 22, variant: anchor }
+          - { sequence: C1, qp: 22, variant: proposed }
+          - { sequence: C1, qp: 27, variant: anchor }
+          - { sequence: C1, qp: 27, variant: proposed }
+          - { sequence: C1, qp: 32, variant: anchor }
+          - { sequence: C1, qp: 32, variant: proposed }
+          - { sequence: C1, qp: 37, variant: anchor }
+          - { sequence: C1, qp: 37, variant: proposed }
+          - { sequence: D1, qp: 22, variant: anchor }
+          - { sequence: D1, qp: 22, variant: proposed }
+          - { sequence: D1, qp: 27, variant: anchor }
+          - { sequence: D1, qp: 27, variant: proposed }
+          - { sequence: D1, qp: 32, variant: anchor }
+          - { sequence: D1, qp: 32, variant: proposed }
+          - { sequence: D1, qp: 37, variant: anchor }
+          - { sequence: D1, qp: 37, variant: proposed }
+          - { sequence: E1, qp: 22, variant: anchor }
+          - { sequence: E1, qp: 22, variant: proposed }
+          - { sequence: E1, qp: 27, variant: anchor }
+          - { sequence: E1, qp: 27, variant: proposed }
+          - { sequence: E1, qp: 32, variant: anchor }
+          - { sequence: E1, qp: 32, variant: proposed }
+          - { sequence: E1, qp: 37, variant: anchor }
+          - { sequence: E1, qp: 37, variant: proposed }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: hybrid-paired-encoders
+          path: prepared
+      - uses: actions/download-artifact@v4
+        with:
+          name: hybrid-input-${{ matrix.sequence }}
+          path: test_sequence
+      - name: Encode paired 32-frame experiment
+        shell: bash
+        env:
+          SEQ: ${{ matrix.sequence }}
+          QP: ${{ matrix.qp }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          sha256sum -c prepared/proposed-source.sha256
+          sha256sum -c test_sequence/input.sha256
+          out="results/$SEQ/QP$QP/$VARIANT"
+          mkdir -p "$out"
+          cp prepared/{commit.txt,compiler.txt,proposed-source.sha256,encoder.sha256} "$out/"
+          cp test_sequence/{input.sha256,metadata.json} "$out/"
+          cfg=$(python3 -c 'import json; print(json.load(open("test_sequence/metadata.json"))["cfg"])')
+          cfg_args=()
+          if [ "$SEQ" != B1 ]; then cfg_args=(-c "cfg/per-sequence/$cfg"); fi
+          encoder=prepared/EncoderAppAnchor
+          if [ "$VARIANT" = proposed ]; then encoder=prepared/EncoderAppHybridNmf; fi
+          chmod +x "$encoder"
+          read -r width height fps depth < <(python3 -c 'import json; m=json.load(open("test_sequence/metadata.json")); print(m["width"],m["height"],m["fps"],m["bitdepth"])')
+          printf '%s\n' "$encoder -c cfg/encoder_randomaccess_vtm.cfg ${cfg_args[*]} -i test_sequence/input.yuv -wdt $width -hgt $height -fr $fps --InputBitDepth=$depth --InputChromaFormat=420 -f 32 -q $QP --MTS=1 --LFNST=0" > "$out/command.txt"
+          NMF_AUDIT=1 "$encoder" -c cfg/encoder_randomaccess_vtm.cfg "${cfg_args[@]}" \
+            -i test_sequence/input.yuv -wdt "$width" -hgt "$height" -fr "$fps" \
+            --InputBitDepth="$depth" --InputChromaFormat=420 -f 32 -q "$QP" \
+            --MTS=1 --LFNST=0 -b "$out/output.vvc" \
+            2>&1 | tee "$out/encode.log"
+          sha256sum "$out/output.vvc" | tee "$out/bitstream.sha256"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hybrid-encode-${{ matrix.sequence }}-QP${{ matrix.qp }}-${{ matrix.variant }}
+          path: results/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 0
+
+  compare-bcde:
+    name: Compare completed BCDE anchor and NMF pairs
+    needs: encode-bcde
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: hybrid-encode-[BCDE]1-*
+          path: results
+          merge-multiple: true
+      - name: Tabulate actual metrics
+        run: python3 nmf_experiment/collect_nmf_batch.py bcde
+      - name: Add comparison table
+        if: always()
+        run: test ! -f batch_summary/bcde.md || cat batch_summary/bcde.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hybrid-comparison-bcde
+          path: batch_summary/
+          retention-days: 30
+          if-no-files-found: warn
+
+  prepare-a1:
+    name: Prepare A1 32-frame input after BCDE
+    needs: [build, compare-bcde]
+    if: ${{ needs.build.result == 'success' && needs.compare-bcde.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare validated A1 input
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check gdown
+          python3 nmf_experiment/prepare_batch_input.py A1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hybrid-input-A1
+          path: test_sequence/
+          retention-days: 2
+          compression-level: 0
+
+  encode-a1:
+    name: A1 QP${{ matrix.qp }} ${{ matrix.variant }}
+    needs: [build, prepare-a1]
+    if: ${{ needs.build.result == 'success' && needs.prepare-a1.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        qp: [27, 32, 37]
+        variant: [anchor, proposed]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: hybrid-paired-encoders
+          path: prepared
+      - uses: actions/download-artifact@v4
+        with:
+          name: hybrid-input-A1
+          path: test_sequence
+      - name: Encode paired A1 experiment; QP22 intentionally excluded
+        shell: bash
+        env:
+          SEQ: A1
+          QP: ${{ matrix.qp }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          sha256sum -c prepared/proposed-source.sha256
+          sha256sum -c test_sequence/input.sha256
+          out="results/$SEQ/QP$QP/$VARIANT"
+          mkdir -p "$out"
+          cp prepared/{commit.txt,compiler.txt,proposed-source.sha256,encoder.sha256} "$out/"
+          cp test_sequence/{input.sha256,metadata.json} "$out/"
+          cfg=$(python3 -c 'import json; print(json.load(open("test_sequence/metadata.json"))["cfg"])')
+          encoder=prepared/EncoderAppAnchor
+          if [ "$VARIANT" = proposed ]; then encoder=prepared/EncoderAppHybridNmf; fi
+          chmod +x "$encoder"
+          read -r width height fps depth < <(python3 -c 'import json; m=json.load(open("test_sequence/metadata.json")); print(m["width"],m["height"],m["fps"],m["bitdepth"])')
+          printf '%s\n' "$encoder -c cfg/encoder_randomaccess_vtm.cfg -c cfg/per-sequence/$cfg -i test_sequence/input.yuv -wdt $width -hgt $height -fr $fps --InputBitDepth=$depth --InputChromaFormat=420 -f 32 -q $QP --MTS=1 --LFNST=0" > "$out/command.txt"
+          NMF_AUDIT=1 "$encoder" -c cfg/encoder_randomaccess_vtm.cfg -c "cfg/per-sequence/$cfg" \
+            -i test_sequence/input.yuv -wdt "$width" -hgt "$height" -fr "$fps" \
+            --InputBitDepth="$depth" --InputChromaFormat=420 -f 32 -q "$QP" \
+            --MTS=1 --LFNST=0 -b "$out/output.vvc" \
+            2>&1 | tee "$out/encode.log"
+          sha256sum "$out/output.vvc" | tee "$out/bitstream.sha256"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hybrid-encode-A1-QP${{ matrix.qp }}-${{ matrix.variant }}
+          path: results/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 0
+
+  compare-a1:
+    name: Compare A1 QP27 QP32 QP37 pairs
+    needs: encode-a1
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: hybrid-encode-A1-*
+          path: results
+          merge-multiple: true
+      - name: Tabulate actual A1 metrics
+        run: python3 nmf_experiment/collect_nmf_batch.py a1
+      - name: Add comparison table
+        if: always()
+        run: test ! -f batch_summary/a1.md || cat batch_summary/a1.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hybrid-comparison-a1
+          path: batch_summary/
+          retention-days: 30
+          if-no-files-found: warn
+
+  final:
+    name: Collect complete corrected NMF comparison tables
+    needs: [compare-bcde, compare-a1]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: hybrid-comparison-*
+          path: all_comparisons
+          merge-multiple: true
+      - name: Print available tables
+        run: find all_comparisons -name '*.md' -type f -exec cat {} \; >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hybrid-all-sequence-comparisons
+          path: all_comparisons/
+          retention-days: 30
+          if-no-files-found: warn
