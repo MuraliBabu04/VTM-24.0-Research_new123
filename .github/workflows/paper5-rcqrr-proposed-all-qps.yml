@@ -1,0 +1,191 @@
+name: Paper 5 RC-QRR proposed - 51 matched QP runs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require actual RC-QRR integration before proposed coding
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f scripts/run_paper5_rcqrr.sh || { echo 'BLOCKED: Paper 5 RC-QRR VTM encoder runner is not integrated. No VTM anchor may be mislabeled as proposed.' >&2; exit 1; }
+          grep -R -q 'RCQRR_ENGINE_V1' source/Lib/EncoderLib source/Lib/CommonLib || { echo 'BLOCKED: RC-QRR screening engine marker absent from encoder source.' >&2; exit 1; }
+
+  matrix:
+    runs-on: ubuntu-latest
+    needs: preflight
+    outputs:
+      runs: ${{ steps.emit.outputs.runs }}
+      inputs: ${{ steps.emit.outputs.inputs }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: emit
+        name: Validate matched Paper 2 frame counts and build run matrix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import csv, json, os
+          with open('experiments/paper5/rcqrr_run_matrix.csv', newline='') as f:
+              rows = list(csv.DictReader(f))
+          assert len(rows) == 51, 'Expected 51 QP runs'
+          assert sum(int(r['frames']) for r in rows) == 3168
+          assert not any(r['class'] == 'A1' and r['qp'] == '22' for r in rows)
+          assert all(r['mts'] == '1' and r['lfnst'] == '1' for r in rows)
+          seen = {}
+          for r in rows:
+              k = r['sequence']
+              if k in seen: assert seen[k]['frames'] == r['frames']
+              else: seen[k] = dict(sequence=k, frames=int(r['frames']), cls=r['class'])
+          m = [dict(sequence=r['sequence'], qp=int(r['qp']), frames=int(r['frames']), cls=r['class']) for r in rows]
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('runs=' + json.dumps({'include': m}, separators=(',', ':')) + '\n')
+              f.write('inputs=' + json.dumps({'include': list(seen.values())}, separators=(',', ':')) + '\n')
+          PY
+
+  input:
+    name: Prepare ${{ matrix.sequence }} - ${{ matrix.frames }}f
+    needs: matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJson(needs.matrix.outputs.inputs) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare exactly the Paper 2 input frames
+        env:
+          SEQ: ${{ matrix.sequence }}
+          FRAMES: ${{ matrix.frames }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p Test_Sequences
+          case "$SEQ" in
+            A1_Tango)
+              python3 -m pip install --disable-pip-version-check gdown
+              python3 scripts/prepare_class_a1_tango_input.py --url 'https://drive.google.com/file/d/1UYRKYgN51OX1cpVHq-TCtJe-qo0YDuq1/view' --output Test_Sequences/Tango2_3840x2160_60fps_10bit_420.yuv --frames "$FRAMES"
+              ;;
+            B1_Kimono1|B2_ParkScene|B3_Cactus)
+              python3 -m pip install --disable-pip-version-check gdown
+              case "$SEQ" in
+                B1_Kimono1) f=B1_Kimono1_1920x1080_24.yuv; url=https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view ;;
+                B2_ParkScene) f=B2_ParkScene_1920x1080_24.yuv; url=https://drive.google.com/file/d/1T6bD9NgeOSTIHzulcB2LOcxKUBA_eJcg/view ;;
+                B3_Cactus) f=B3_Cactus_1920x1080_50.yuv; url=https://drive.google.com/file/d/19CIbt-C0yFxJAPZSx5JWQsFQ9Hhb13ao/view ;;
+              esac
+              python3 scripts/prepare_class_b_input.py --url "$url" --output "Test_Sequences/$f" --frames "$FRAMES"
+              ;;
+            C1_RaceHorses|C2_BQMall|C3_PartyScene)
+              python3 -m pip install --disable-pip-version-check gdown
+              case "$SEQ" in
+                C1_RaceHorses) f=C1_RaceHorses_832x480_30.yuv; url=https://drive.google.com/file/d/1d8FMx_LEGCNSPlY5pu_o5x69Se9lZhkQ/view ;;
+                C2_BQMall) f=C2_BQMall_832x480_60.yuv; url=https://drive.google.com/file/d/1dEfl5qIhzokM-mZWVwpCESdefzh2pPji/view ;;
+                C3_PartyScene) f=C3_PartyScene_832x480_50.yuv; url=https://drive.google.com/file/d/1_l7Zr3edEHhFGulnYUvUM16hcNTOxz60/view ;;
+              esac
+              python3 scripts/prepare_class_c_input.py --url "$url" --output "Test_Sequences/$f" --frames "$FRAMES"
+              ;;
+            D1_RaceHorses|D2_BQSquare|D3_BlowingBubbles)
+              case "$SEQ" in
+                D1_RaceHorses) f=D1_RaceHorses_416x240_30.yuv; hash=7192decb5ab38d0367afcce4c3ca77c6fc06b11d0d50de2c27eceda8ecd24951 ;;
+                D2_BQSquare) f=D2_BQSquare_416x240_60.yuv; hash=2ea8a868496358ab11761fca9b524eb169b369fe933472650bc499262b31e374 ;;
+                D3_BlowingBubbles) f=D3_BlowingBubbles_416x240_50.yuv; hash=34de0fb4fb637a53994cfc67db8b22d01fe9b54e207db20d25683e72789682d5 ;;
+              esac
+              for part in test_sequences/class_d/"${f}".gz.b64.part*.b64; do base64 --decode "$part"; done | gzip -dc > "Test_Sequences/$f"
+              test "$(stat -c%s "Test_Sequences/$f")" -eq 9584640
+              echo "$hash  Test_Sequences/$f" | sha256sum --check --strict
+              ;;
+            E1_FourPeople|E2_Johnny|E3_KristenAndSara)
+              case "$SEQ" in
+                E1_FourPeople) f=E1_FourPeople_1280x720_60.yuv; src=FourPeople ;;
+                E2_Johnny) f=E2_Johnny_1280x720_60.yuv; src=Johnny ;;
+                E3_KristenAndSara) f=E3_KristenAndSara_1280x720_60.yuv; src=KristenAndSara ;;
+              esac
+              URL="https://media.xiph.org/video/derf/y4m/${src}_1280x720_60.y4m" FILE="Test_Sequences/$f" python3 - <<'PY'
+          import os, urllib.request
+          url, path = os.environ['URL'], os.environ['FILE']
+          frame_bytes=1280*720*3//2
+          with urllib.request.urlopen(url, timeout=90) as src, open(path,'wb') as out:
+              header=src.readline()
+              assert header.startswith(b'YUV4MPEG2') and b'W1280' in header and b'H720' in header
+              for i in range(64):
+                  assert src.readline().startswith(b'FRAME'), i
+                  remain=frame_bytes
+                  while remain:
+                      z=src.read(min(remain,1024*1024))
+                      assert z, ('Truncated',i)
+                      out.write(z); remain-=len(z)
+          assert os.path.getsize(path)==64*frame_bytes
+          PY
+              ;;
+            *) echo "Unknown sequence: $SEQ" >&2; exit 2 ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paper5-rcqrr-input-${{ matrix.sequence }}
+          path: Test_Sequences/*.yuv
+          retention-days: 1
+          compression-level: 0
+
+  build:
+    name: Build RC-QRR enabled VTM encoder
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build proposed encoder
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target EncoderApp --parallel 2
+          test -x bin/EncoderAppStatic
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paper5-rcqrr-encoder
+          path: bin/EncoderAppStatic
+          retention-days: 1
+          compression-level: 0
+
+  proposed:
+    name: RC-QRR ${{ matrix.sequence }} QP${{ matrix.qp }} ${{ matrix.frames }}f
+    needs: [matrix, input, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix: ${{ fromJson(needs.matrix.outputs.runs) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: paper5-rcqrr-encoder
+          path: rcqrr-bin
+      - uses: actions/download-artifact@v4
+        with:
+          name: paper5-rcqrr-input-${{ matrix.sequence }}
+          path: Test_Sequences
+      - name: Run actual RC-QRR screening, final normative VTM transform
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/rcqrr-bin/EncoderAppStatic
+          RESULT_DIR: ${{ github.workspace }}/results/Paper5/${{ matrix.sequence }}/QP${{ matrix.qp }}
+        run: |
+          set -euo pipefail
+          chmod +x "$VTM_ENCODER" scripts/run_paper5_rcqrr.sh
+          scripts/run_paper5_rcqrr.sh '${{ matrix.sequence }}' '${{ matrix.qp }}' '${{ matrix.frames }}'
+      - name: Upload proposed coding and candidate screening outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper5-RCQRR-${{ matrix.sequence }}-QP${{ matrix.qp }}-${{ matrix.frames }}f
+          path: results/Paper5/${{ matrix.sequence }}/QP${{ matrix.qp }}/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 0
