@@ -37,6 +37,7 @@
 
 #include "TrQuant.h"
 #include "TrQuant_EMT.h"
+#include "Paper5RCQRR.h"
 #include "CDSATMStats.h"
 
 #include "UnitTools.h"
@@ -966,6 +967,9 @@ void TrQuant::transformNxN(TransformUnit &tu, const ComponentID &compID, const Q
   int pos = 0;
   static_vector<TrCost, TrModeList::max_num_elements> trCosts;
   const double facBB[] = { 1.2, 1.3, 1.3, 1.4, 1.5 };
+  double baselineExactCost = 0.0;
+  double baselineProxyCost = 0.0;
+  const bool rcqrrEligible = compID == COMPONENT_Y && width <= 32 && height <= 32 && width >= 4 && height >= 4;
   for (auto &it: trModes)
   {
     tu.mtsIdx[compID] = it.first;
@@ -977,19 +981,46 @@ void TrQuant::transformNxN(TransformUnit &tu, const ComponentID &compID, const Q
       continue;
     }
 
-    if (tu.mtsIdx[compID] == MtsType::SKIP)
+    bool scoredByRCQRR = false;
+    double approxCost = 0.0;
+    if (rcqrrEligible && tu.mtsIdx[compID] > MtsType::SKIP && baselineProxyCost > 1e-12)
     {
-      xTransformSkip( tu, compID, resiBuf, tempCoeff.buf );
+      const double score = Paper5RCQRR::score(resiBuf, width, height, int(tu.mtsIdx[compID]));
+      if (std::isfinite(score) && score >= 0.0)
+      {
+        approxCost = score * baselineExactCost / baselineProxyCost;
+        scoredByRCQRR = true;
+        Paper5RCQRR::stats().approximate.fetch_add(1);
+      }
     }
-    else
+    if (!scoredByRCQRR)
     {
-      xT( tu, compID, resiBuf, tempCoeff, width, height );
+      if (tu.mtsIdx[compID] == MtsType::SKIP)
+      {
+        xTransformSkip( tu, compID, resiBuf, tempCoeff.buf );
+      }
+      else
+      {
+        xT( tu, compID, resiBuf, tempCoeff, width, height );
+      }
     }
 
     TCoeff sumAbs = 0;
-    for (int k = 0; k < width * height; k++)
+    if (scoredByRCQRR)
     {
-      sumAbs += abs(tempCoeff.buf[k]);
+      sumAbs = TCoeff(std::min<double>(approxCost, std::numeric_limits<TCoeff>::max()));
+    }
+    else
+    {
+      for (int k = 0; k < width * height; k++)
+      {
+        sumAbs += abs(tempCoeff.buf[k]);
+      }
+    }
+    if (rcqrrEligible && tu.mtsIdx[compID] == MtsType::DCT2_DCT2 && !tu.noResidual)
+    {
+      baselineExactCost = double(sumAbs);
+      baselineProxyCost = Paper5RCQRR::score(resiBuf, width, height, int(MtsType::DCT2_DCT2));
     }
 
     double scaleSAD=1.0;
@@ -1054,7 +1085,12 @@ void TrQuant::transformNxN(TransformUnit &tu, const ComponentID &compID, const Q
 
   DTRACE_PEL_BUF(D_RESIDUALS, resiBuf, tu, tu.cu->predMode, compID);
 
-  if (!loadTr)
+  // The RC-QRR first pass only scores MTS candidates; selected candidates
+  // must be recomputed through exact VVC xT before quantization and RDO.
+  const bool rcqrrExact = loadTr && compID == COMPONENT_Y &&
+                          tu.mtsIdx[compID] > MtsType::SKIP &&
+                          uiWidth <= 32 && uiHeight <= 32;
+  if (!loadTr || rcqrrExact)
   {
     if (tu.mtsIdx[compID] == MtsType::SKIP)
     {
@@ -1064,6 +1100,7 @@ void TrQuant::transformNxN(TransformUnit &tu, const ComponentID &compID, const Q
     {
       xT(tu, compID, resiBuf, tempCoeff, uiWidth, uiHeight);
     }
+    if (rcqrrExact) Paper5RCQRR::stats().exactFinal.fetch_add(1);
   }
 
   if (sps.getUseLFNST())
