@@ -45,7 +45,7 @@ jobs:
           seen = {}
           for r in rows:
               k = r['sequence']
-              if k in seen: assert seen[k]['frames'] == r['frames']
+              if k in seen: assert seen[k]['frames'] == int(r['frames'])
               else: seen[k] = dict(sequence=k, frames=int(r['frames']), cls=r['class'])
           m = [dict(sequence=r['sequence'], qp=int(r['qp']), frames=int(r['frames']), cls=r['class']) for r in rows]
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
