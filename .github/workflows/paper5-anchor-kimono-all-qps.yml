@@ -1,0 +1,99 @@
+name: Paper 5 - VTM24 anchor Kimono 32f parallel QPs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/paper5-anchor-kimono-all-qps.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare-input:
+    name: Prepare B1 Kimono1 32 frames
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare exact shared input
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check gdown
+          python3 scripts/prepare_class_b_input.py \
+            --url "https://drive.google.com/file/d/1843eyCx362pJgZ1BWzBSPLzsqIsD4fmC/view?usp=drive_link" \
+            --output Test_Sequences/B1_Kimono1_1920x1080_24.yuv \
+            --frames 32
+          test "$(stat -c%s Test_Sequences/B1_Kimono1_1920x1080_24.yuv)" -eq 99532800
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paper5-kimono32-input
+          path: Test_Sequences/B1_Kimono1_1920x1080_24.yuv
+          retention-days: 1
+          compression-level: 0
+
+  build-vtm:
+    name: Build conventional VTM-24.0
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure and build standard encoder
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target EncoderApp --parallel 2
+          test -x bin/EncoderAppStatic
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paper5-vtm-anchor-encoder
+          path: bin/EncoderAppStatic
+          retention-days: 1
+          compression-level: 0
+
+  anchor:
+    name: B1 Kimono1 Anchor QP ${{ matrix.qp }}
+    needs: [prepare-input, build-vtm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        qp: [22, 27, 32, 37]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: paper5-vtm-anchor-encoder
+          path: instrumented-vtm
+      - uses: actions/download-artifact@v4
+        with:
+          name: paper5-kimono32-input
+          path: Test_Sequences
+      - name: Verify matched controls
+        run: |
+          set -euo pipefail
+          test "$(stat -c%s Test_Sequences/B1_Kimono1_1920x1080_24.yuv)" -eq 99532800
+          chmod +x instrumented-vtm/EncoderAppStatic scripts/run_anchor_ctc_sequence.sh
+      - name: Run 32 frames MTS1 LFNST1
+        env:
+          VTM_ENCODER: ${{ github.workspace }}/instrumented-vtm/EncoderAppStatic
+        run: |
+          set -euo pipefail
+          scripts/run_anchor_ctc_sequence.sh B1_Kimono1 "${{ matrix.qp }}" 32
+      - name: Upload measurable coding outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper5-anchor-B1-Kimono1-QP${{ matrix.qp }}-32f
+          path: results/Anchor/Class_B/B1_Kimono1/QP${{ matrix.qp }}/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 0
+      - name: Summarize verified run
+        if: always()
+        run: |
+          summary="results/Anchor/Class_B/B1_Kimono1/QP${{ matrix.qp }}/B1_Kimono1_QP${{ matrix.qp }}_anchor_summary.txt"
+          if test -f "$summary"; then cat "$summary" >> "$GITHUB_STEP_SUMMARY"; fi
