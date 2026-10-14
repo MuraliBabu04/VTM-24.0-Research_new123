@@ -1,20 +1,17 @@
-# Paper 5 RC-QRR VTM experimental matrix
+# Paper 5 - RC-QRR primary pilot experiment
 
-This file is a planned configuration, not a claim of completed results.
+These are **planned paired runs**, not experimental results.
 
-- **13 sequences, 51 QP runs, 3,168 encoded frames**.
-- Reuse Paper 2 anchor framing: A1 32, B 32, C 96, D 64, E 64 frames per QP.
-- **A1 Tango2 QP22 is intentionally excluded**; A1 QP27/32/37 only.
-- **MTS=1, LFNST=1**, matching previous anchor workflows. RC-QRR applies to the primary MTS candidate screening only, not to LFNST.
-- Random Access with cfg/encoder_randomaccess_vtm.cfg plus sequence cfg.
-- Report Y/U/V PSNR, bitrate, encoding time, candidate ranking/recall, exact candidates tested, and BD-rate only after QP curves are complete.
-- IMPORTANT: Existing standard VTM or other NMF/CD-SATM modified jobs do **not** count as RC-QRR proposed results. The proposed encoder must contain the corrected weighted factor generation and a real screening hook with normative final RDO.
-- Baselines may be reused only if sequence bytes/frames, encoder settings, QPs, and code version match; otherwise re-encode matched anchor.
+- **8 sequences, 15 paired QP cases, 1,056 input frames per encoder / 2,112 frames total (anchor plus proposed).**
+- **Both anchor and proposed:** VTM-24.0 Random Access, MTS=1 (ON), LFNST=0 (OFF).
+- **A1 Tango2:** QP37 only, 32 frames.
+- **B1 Kimono1:** QP22 and QP32, 32 frames each.
+- **C1 RaceHorses, C2 BQMall, C3 PartyScene:** QP22 and QP37, 96 frames each.
+- **D1 RaceHorses, D2 BQSquare, D3 BlowingBubbles:** QP22 and QP37, 64 frames each.
+- A1 QP22 and all other sequences/QPs are excluded from this pilot.
 
-| Group | QPs | Frames per QP | QP runs | Total frames |
-|---|---|---:|---:|---:|
-| A1 | 27,32,37 | 32 | 3 | 96 |
-| B1-B3 | 22,27,32,37 | 32 | 12 | 384 |
-| C1-C3 | 22,27,32,37 | 96 | 12 | 1152 |
-| D1-D3 | 22,27,32,37 | 64 | 12 | 768 |
-| E1-E3 | 22,27,32,37 | 64 | 12 | 768 |
+The Paper 2 MTS=1, LFNST=1 anchor results **cannot** be reused as an RC-QRR LFNST=0 comparison. Launch matched anchors with the LFNST=0 setting.
+
+**Important:** The paper5-proposed workflow is deliberately blocked until RC-QRR candidate screening has been integrated into VTM itself; standard VTM runs must not be mislabeled as RC-QRR proposed results. The Python-only theoretical energy model is not encoder integration.
+
+For each run record: exact source file and number of frames, encoder version, QP, Y/U/V PSNR, bitrate, encoding time, shortlist size, selected MTS candidate IDs, ground-truth best candidate when available, exact RDO candidate counts and hardware-power data separately. **BD-rate requires four QP operating points per sequence**; this two-QP pilot measures paired point differences, not conventional BD-rate.
