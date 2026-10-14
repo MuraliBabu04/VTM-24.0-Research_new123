@@ -80,8 +80,8 @@ echo "Starting VTM anchor: $SEQUENCE | QP $QP | $FRAMES frames"
   --InputFile="$INPUT_YUV" \
   -f "$FRAMES" \
   -q "$QP" \
-  --MTS=1 \
-  --LFNST=1 \
+  --MTS="${VTM_MTS:-1}" \
+  --LFNST="${VTM_LFNST:-1}" \
   -b "$BITSTREAM" \
   2>&1 | tee "$VTM_LOG"
 
@@ -92,8 +92,8 @@ echo "Starting VTM anchor: $SEQUENCE | QP $QP | $FRAMES frames"
   echo "QP: $QP"
   echo "Frames: $FRAMES"
   echo "GOPSize: 32"
-  echo "MTS: 1"
-  echo "LFNST: 1"
+  echo "MTS: ${VTM_MTS:-1}"
+  echo "LFNST: ${VTM_LFNST:-1}"
   echo
   grep -E 'SUMMARY|Total Frames|^[[:space:]]*[0-9]+[[:space:]]+a[[:space:]]|^a[[:space:]]|Total Time' "$VTM_LOG" || true
 } | tee "$SUMMARY"
