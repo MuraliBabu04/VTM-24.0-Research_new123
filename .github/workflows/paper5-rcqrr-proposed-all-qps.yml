@@ -1,4 +1,4 @@
-name: Paper 5 BD-rate missing 17 RC-QRR QPs MTS1 LFNST0
+name: Paper 5 BD-rate missing 16 RC-QRR QPs except Tango22 MTS1 LFNST0
 
 on:
   push:
@@ -50,8 +50,8 @@ jobs:
           prior = {(r['sequence'], int(r['qp'])) for r in rows}
           m = [dict(sequence=item['sequence'], qp=qp, frames=item['frames'], cls=item['cls'])
                for item in seen.values() for qp in (22, 27, 32, 37)
-               if (item['sequence'], qp) not in prior]
-          assert len(m) == 17 and sum(x['frames'] for x in m) == 1120, 'Expected 17 remaining QP cases'
+               if (item['sequence'], qp) not in prior and not (item['sequence'] == 'A1_Tango' and qp == 22)]
+          assert len(m) == 16 and sum(x['frames'] for x in m) == 1088, 'Expected 16 remaining QP cases excluding Tango QP22'
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write('runs=' + json.dumps({'include': m}, separators=(',', ':')) + '\n')
               f.write('inputs=' + json.dumps({'include': list(seen.values())}, separators=(',', ':')) + '\n')
