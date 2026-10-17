@@ -1,4 +1,4 @@
-name: Paper 5 pilot matched VTM anchors MTS1 LFNST0
+name: Paper 5 BD-rate missing 17 anchors MTS1 LFNST0
 
 on:
   push:
@@ -95,30 +95,32 @@ jobs:
           compression-level: 0
 
   anchor:
-    name: Anchor ${{ matrix.sequence }} QP${{ matrix.qp }} MTS1 LFNST0
+    name: BD-rate Anchor ${{ matrix.sequence }} QP${{ matrix.qp }} MTS1 LFNST0
     needs: [prepare, build]
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 8
       matrix:
         include:
-          - {sequence: A1_Tango, cls: A1, qp: 37, frames: 32}
-          - {sequence: B1_Kimono1, cls: B, qp: 22, frames: 32}
-          - {sequence: B1_Kimono1, cls: B, qp: 32, frames: 32}
-          - {sequence: C1_RaceHorses, cls: C, qp: 22, frames: 96}
-          - {sequence: C1_RaceHorses, cls: C, qp: 37, frames: 96}
-          - {sequence: C2_BQMall, cls: C, qp: 22, frames: 96}
-          - {sequence: C2_BQMall, cls: C, qp: 37, frames: 96}
-          - {sequence: C3_PartyScene, cls: C, qp: 22, frames: 96}
-          - {sequence: C3_PartyScene, cls: C, qp: 37, frames: 96}
-          - {sequence: D1_RaceHorses, cls: D, qp: 22, frames: 64}
-          - {sequence: D1_RaceHorses, cls: D, qp: 37, frames: 64}
-          - {sequence: D2_BQSquare, cls: D, qp: 22, frames: 64}
-          - {sequence: D2_BQSquare, cls: D, qp: 37, frames: 64}
-          - {sequence: D3_BlowingBubbles, cls: D, qp: 22, frames: 64}
-          - {sequence: D3_BlowingBubbles, cls: D, qp: 37, frames: 64}
+          - {sequence: A1_Tango, cls: A1, qp: 22, frames: 32}
+          - {sequence: A1_Tango, cls: A1, qp: 27, frames: 32}
+          - {sequence: A1_Tango, cls: A1, qp: 32, frames: 32}
+          - {sequence: B1_Kimono1, cls: B, qp: 27, frames: 32}
+          - {sequence: B1_Kimono1, cls: B, qp: 37, frames: 32}
+          - {sequence: C1_RaceHorses, cls: C, qp: 27, frames: 96}
+          - {sequence: C1_RaceHorses, cls: C, qp: 32, frames: 96}
+          - {sequence: C2_BQMall, cls: C, qp: 27, frames: 96}
+          - {sequence: C2_BQMall, cls: C, qp: 32, frames: 96}
+          - {sequence: C3_PartyScene, cls: C, qp: 27, frames: 96}
+          - {sequence: C3_PartyScene, cls: C, qp: 32, frames: 96}
+          - {sequence: D1_RaceHorses, cls: D, qp: 27, frames: 64}
+          - {sequence: D1_RaceHorses, cls: D, qp: 32, frames: 64}
+          - {sequence: D2_BQSquare, cls: D, qp: 27, frames: 64}
+          - {sequence: D2_BQSquare, cls: D, qp: 32, frames: 64}
+          - {sequence: D3_BlowingBubbles, cls: D, qp: 27, frames: 64}
+          - {sequence: D3_BlowingBubbles, cls: D, qp: 32, frames: 64}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
