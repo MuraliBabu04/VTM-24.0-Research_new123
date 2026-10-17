@@ -1,4 +1,4 @@
-name: Paper 5 RC-QRR PRIMARY pilot 15 pairs MTS1 LFNST0
+name: Paper 5 BD-rate missing 17 RC-QRR QPs MTS1 LFNST0
 
 on:
   push:
@@ -47,7 +47,11 @@ jobs:
               k = r['sequence']
               if k in seen: assert seen[k]['frames'] == int(r['frames'])
               else: seen[k] = dict(sequence=k, frames=int(r['frames']), cls=r['class'])
-          m = [dict(sequence=r['sequence'], qp=int(r['qp']), frames=int(r['frames']), cls=r['class']) for r in rows]
+          prior = {(r['sequence'], int(r['qp'])) for r in rows}
+          m = [dict(sequence=item['sequence'], qp=qp, frames=item['frames'], cls=item['cls'])
+               for item in seen.values() for qp in (22, 27, 32, 37)
+               if (item['sequence'], qp) not in prior]
+          assert len(m) == 17 and sum(x['frames'] for x in m) == 1120, 'Expected 17 remaining QP cases'
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write('runs=' + json.dumps({'include': m}, separators=(',', ':')) + '\n')
               f.write('inputs=' + json.dumps({'include': list(seen.values())}, separators=(',', ':')) + '\n')
@@ -164,7 +168,7 @@ jobs:
     timeout-minutes: 360
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 8
       matrix: ${{ fromJson(needs.matrix.outputs.runs) }}
     steps:
       - uses: actions/checkout@v4
