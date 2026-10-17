@@ -104,7 +104,6 @@ jobs:
       max-parallel: 8
       matrix:
         include:
-          - {sequence: A1_Tango, cls: A1, qp: 22, frames: 32}
           - {sequence: A1_Tango, cls: A1, qp: 27, frames: 32}
           - {sequence: A1_Tango, cls: A1, qp: 32, frames: 32}
           - {sequence: B1_Kimono1, cls: B, qp: 27, frames: 32}
